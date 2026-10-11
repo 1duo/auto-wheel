@@ -1,0 +1,18 @@
+{
+  "schema_version": "PilotStateHandoffV1",
+  "state_dir": "/tmp/autowheel-retirement-native-ouumwmul",
+  "database_path": "/tmp/autowheel-retirement-native-ouumwmul/pilot.sqlite3",
+  "database_sha256": "3ce7dc32a56c2e8179489d4ed36f182a62ed531483c7ca3fdfff2ac2385ae255",
+  "database_bytes": 122880,
+  "event_count": 0,
+  "event_anchor_hash": "715d40864f0d2a38bac2fb155934677055e9a9271ee205aa7a79caaa22032275",
+  "local_state": {
+    "expected_account_identity_hash": "ef797c8118f02dfb649607dd5d3f8c7623048c9c063d532cc95c5ed7a898a64f",
+    "lifecycles": [],
+    "order_intents": [],
+    "ambiguous_symbols": []
+  },
+  "lifecycles": [],
+  "sealed_at": "2026-10-11T05:16:11.536568511+00:00",
+  "handoff_hash": "1b4e328c7fcf7323eae8b7aef42fc2c68b0ca150e5ddcc64fbd08619e037d9c8"
+}

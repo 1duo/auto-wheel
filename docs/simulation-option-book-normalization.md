@@ -1,0 +1,13 @@
+# Native option book candidate normalization
+
+The offline `replaynormalize.OptionBook` adapter converts a separately attested, closed OPRA CMBP observation into an option book candidate. It preserves the original native record, source hash, instrument mapping, prices, raw sizes, venue identifiers and all receive/event/completion/observation clocks. It does not create a strategy quote or infer contracts, shares, currency, multiplier, deliverables, tick rules, tradability, OI or Greeks.
+
+The disclosed receive-clock policy requires both the original book receive and event clocks to be within 30 seconds of the closed cut. Trade records, transport timestamps and event completion never refresh book age. Missing, pending, stale, invalid, crossed, undefined-size or subcent inputs remain explicit rejections. Prices convert exactly to integer cents without rounding.
+
+Wire identifiers and field types were checked against the [official CMBP schema](https://databento.com/docs/schemas-and-data-formats/cmbp-1) and [DBN v0.71.0 publisher definitions](https://raw.githubusercontent.com/databento/dbn/v0.71.0/rust/dbn/src/publishers.rs). Recognizing a publisher enum is not a dated operational venue roster or a historical source qualification.
+
+The research exporter streams the entire native source through the existing causal reducer. Its callbacks and private staging file remain provisional until native metadata, record count, bytes, digest and literal EOF have passed. It emits a bounded projection of decoded original fields. Opaque reserved bytes stay in the helper's original record and hash-bound native source; the earlier capture protocol does not expose them.
+
+`scripts/audit-option-book-replay-normalizer.py` checks immutable acquisition receipts, source/native/capture bindings and private file requirements. It independently projects every retained closed capture and compares the resulting packet, counters, clocks, prices, sizes and decoded original fields. It verifies full compressed/plaintext EOF and source/code stability before publishing a private candidate artifact. Licensed records and candidate values stay on MSI.
+
+Focused Go tests, the offline exporter build and nine synthetic runtime controls cover literal preservation, truncated native input, late digest failure, trailing descriptor data, existing staging evidence, symlink rejection, undefined size, metadata mismatch and missing identity. This is candidate plumbing for the frozen 15-symbol, 126-session study. Full per-series terms, dated eligibility, causal Greek inputs, remaining full-day books, pending-order/GFD execution coverage and lifecycle qualification remain necessary before either mode's performance can be reported. Production settings are unchanged.

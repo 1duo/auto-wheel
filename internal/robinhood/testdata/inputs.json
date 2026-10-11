@@ -1,0 +1,196 @@
+[
+  {
+    "name": "get_equity_quotes",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "symbols": {
+          "description": "One or more stock symbols. Above 20 symbols, quotes still return but closes is omitted with closes_error set.",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        }
+      },
+      "required": [
+        "symbols"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "get_option_chains",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "ids": {
+          "description": "Comma-separated chain UUIDs.",
+          "type": "string"
+        },
+        "underlying_symbol": {
+          "description": "Ticker filter; covers equity and index underlyings (e.g. 'AAPL', 'SPX').",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
+  },
+  {
+    "name": "get_option_instruments",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "chain_id": {
+          "description": "Chain UUID.",
+          "type": "string"
+        },
+        "chain_symbol": {
+          "description": "Underlying ticker (e.g. 'AAPL').",
+          "type": "string"
+        },
+        "cursor": {
+          "description": "Pagination cursor. Omit for the first page; for the next page, pass the prior response's next value back verbatim.",
+          "type": "string"
+        },
+        "expiration_dates": {
+          "description": "Comma-separated YYYY-MM-DD expirations.",
+          "type": "string"
+        },
+        "ids": {
+          "description": "Comma-separated instrument UUIDs.",
+          "type": "string"
+        },
+        "state": {
+          "description": "'active' (default), 'expired', or 'inactive'. Use 'expired' to find option contracts whose expiration date has passed; 'inactive' is for delisted/withdrawn contracts that never expired.",
+          "type": "string"
+        },
+        "strike_price": {
+          "description": "Exact strike (e.g. '150.0000').",
+          "type": "string"
+        },
+        "tradability": {
+          "description": "'tradable' or 'untradable' (untradable is rejected at the tool layer).",
+          "type": "string"
+        },
+        "type": {
+          "description": "'call' or 'put'.",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
+  },
+  {
+    "name": "get_option_quotes",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "instrument_ids": {
+          "description": "Option instrument UUIDs. Above 20, quotes still return but closes is omitted with closes_error set.",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        }
+      },
+      "required": [
+        "instrument_ids"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "review_option_order",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "account_number": {
+          "description": "Brokerage account number. Must come from the user or be clearly implied \u2014 never default from get_accounts. Must be agentic_allowed=true.",
+          "type": "string"
+        },
+        "chain_symbol": {
+          "description": "Underlying ticker (e.g. 'AAPL', 'SPXW'). Supply alongside underlying_type to include fees and collateral in the response \u2014 always do so when known.",
+          "type": "string"
+        },
+        "direction": {
+          "description": "Net direction of the whole order: 'debit' (you pay the net premium) or 'credit' (you receive it). Required with 2 or more legs; for one leg it is derived from that leg's side, so omit it.",
+          "type": "string"
+        },
+        "legs": {
+          "description": "1 to 4 legs, all on the same underlying and each a different contract. Several legs are filled together as one strategy.",
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "option_id": {
+                "description": "Option instrument UUID (from get_option_instruments).",
+                "type": "string"
+              },
+              "position_effect": {
+                "description": "'open' (new position) or 'close' (existing position). To close a long use sell; to close a short use buy.",
+                "type": "string"
+              },
+              "ratio_quantity": {
+                "description": "Contracts for this leg per unit of the order's quantity. Defaults to 1, which is what standard spreads, condors, calendars, and rolls use. Must be 1 on a single-leg order; across legs the ratios must be in lowest terms (1:2, not 2:4).",
+                "type": "integer"
+              },
+              "side": {
+                "description": "'buy' or 'sell'.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "option_id",
+              "side",
+              "position_effect"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "market_hours": {
+          "description": "'regular_hours' (default), 'regular_curb_hours', or 'regular_curb_overnight_hours'. Extended-hours sessions only accept limit+immediate. CURB requires an index chain with extended_hours_state='enabled' (per get_option_chains); rejection surfaces at place time.",
+          "type": "string"
+        },
+        "price": {
+          "description": "Limit price (e.g. '1.50'). Per contract for one leg; with several legs it is the net premium of the whole strategy per unit of quantity, always positive \u2014 direction says whether it is paid or received. Required for limit/stop_limit; must be omitted for market/stop_market.",
+          "type": "string"
+        },
+        "quantity": {
+          "description": "Positive integer contract count. With several legs it counts whole strategies \u2014 each leg fills quantity \u00d7 its ratio_quantity contracts.",
+          "type": "string"
+        },
+        "stop_price": {
+          "description": "Stop trigger price per contract. Required for stop_limit/stop_market; must be omitted for limit/market. For sell-side stop_market, must be below the current ask.",
+          "type": "string"
+        },
+        "time_in_force": {
+          "description": "'gfd' (default) or 'gtc'. Market orders must be 'gfd'.",
+          "type": "string"
+        },
+        "type": {
+          "description": "'limit' (default), 'market', 'stop_limit', or 'stop_market'. Only 'limit' is available with 2 or more legs.",
+          "type": "string"
+        },
+        "underlying_type": {
+          "description": "'equity' or 'index'. Required alongside chain_symbol to enable the fee + collateral fetch.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "account_number",
+        "legs",
+        "quantity"
+      ],
+      "type": "object"
+    }
+  }
+]

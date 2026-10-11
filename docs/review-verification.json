@@ -1,0 +1,25 @@
+{
+  "go_version": "go1.27.2",
+  "go_minimum_compilation": "go1.26.9",
+  "govulncheck": "v1.9.0",
+  "vulnerability_findings": 0,
+  "vulnerability_database_date": "2026-10-08T22:31:09Z",
+  "focused_test_groups": {
+    "safety": 30,
+    "simulation": 51,
+    "capital": 4,
+    "portfolio": 6
+  },
+  "distinct_focused_tests_passed": 89,
+  "readme_cli_smoke": true,
+  "source_files": 392,
+  "go_files": 162,
+  "python_syntax_files": 174,
+  "shell_syntax_files": 5,
+  "swift_syntax_files": 5,
+  "gitleaks_version": "8.30.1",
+  "gitleaks_source_findings": 0,
+  "gitleaks_history_findings": 0,
+  "full_test_suite_run": false,
+  "live_orders_submitted": false
+}

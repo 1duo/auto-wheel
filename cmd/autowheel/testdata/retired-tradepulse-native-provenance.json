@@ -1,0 +1,9 @@
+{
+  "purpose": "Native retirement parser compatibility fixture; generated in scratch state with no credentials or broker calls",
+  "native_binary_sha256": "972e007b24552c65335beca6498d91668ca40a8bac04ef80c3039d7f91d9bf77",
+  "native_command": "tradepulse pilot seal-handoff-state --state-dir <scratch>",
+  "seal_file_sha256": "58c883286bfc2293feaa84f6c7ceb56c110160af1d183bc31a5b948a72814e8c",
+  "database_sha256": "3ce7dc32a56c2e8179489d4ed36f182a62ed531483c7ca3fdfff2ac2385ae255",
+  "database_bytes": 122880,
+  "production_state_untouched": true
+}

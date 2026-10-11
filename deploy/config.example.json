@@ -1,0 +1,32 @@
+{
+  "account_number": "",
+  "symbols": [
+    "NVDA",
+    "IREN",
+    "NOW",
+    "AMD",
+    "AMZN",
+    "GOOGL",
+    "META",
+    "MSFT",
+    "PLTR",
+    "AVGO"
+  ],
+  "max_symbols": 3,
+  "max_collateral_cents": 8000000,
+  "cash_reserve_cents": 0,
+  "fee_per_contract_cents": 100,
+  "min_bid_cents": 5,
+  "min_open_interest": 100,
+  "max_spread_bps": 2000,
+  "put_min_delta": 0.05,
+  "put_max_delta": 0.15,
+  "call_min_delta": 0.5,
+  "call_max_delta": 0.85,
+  "allow_calls_below_cost": true,
+  "max_quote_age_seconds": 30,
+  "max_dte_days": 8,
+  "poll_seconds": 300,
+  "symbol_limit_scope": "managed",
+  "selection_mode": "conservative"
+}
