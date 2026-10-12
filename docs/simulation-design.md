@@ -8,7 +8,15 @@ AutoWheel research is offline and cannot bind a production account, OAuth grant,
 
 A scheduled decision requires complete point-in-time chain coverage and all ranking-relevant inputs. The reducer retains receive/event/availability clocks, source digests, original contract identities, standard deliverables, quote sizes, and published open interest. A future, stale, missing, malformed, or unqualified observation blocks a historical run. Specialized omission/exclusion proofs must establish that omitted contracts cannot change selection or execution; they never invent missing bids or Greeks.
 
-Selection chooses the nearest eligible expiry before liquidity ranking. Calls prioritize delta, then time-value ROI; conservative puts prioritize lower absolute delta. Execution reselects through the production engine using the simulated snapshot.
+Selection chooses the nearest eligible expiry before liquidity ranking. Legacy calls prioritize delta, then time-value ROI; legacy conservative puts prioritize lower absolute delta. Named ROI presets rank by net quoted ROI per calendar day. Execution reselects through the production engine using the simulated snapshot.
+
+The explicit `calendar_2024_2025_roi_v1` research variant accepts July–December
+2024 or full 2025, the ten-symbol universe, one of the four frozen ROI presets,
+three slots and a $150,000 offline ceiling. It permits the observed cash seed
+and six-cent/$2 fee cases while preserving the production $80,000 validation
+limit. It requires every native five-minute decision and session valuation;
+declaring coverage alone produces no returns. This continuous execution model
+does not include the weekly diagnostic's additional one-cent price allowance.
 
 The replay models a GFD sell limit at the decision bid, one-second latency, and five seconds of sized bid dwell with observations no more than one second apart. It does not prove queue priority, broker acceptance, actual scan/review latency, or Robinhood fills. Explicit lifecycle and settlement events govern assignment, call-away, and cash/share reuse. The production ownership delay and unresolved-intent fence remain active.
 

@@ -163,10 +163,17 @@ func (r *replay) init() error {
 		return err
 	}
 	end, err := time.ParseInLocation("2006-01-02", s.End, wheel.Eastern)
-	if err != nil || end.Before(start) || end.Sub(start) > 200*24*time.Hour {
+	maxDays, maxCash := 200, wheel.Cents(8_000_000)
+	if s.ResearchVariant == ResearchMultiyearROI {
+		if !((s.Start == "2024-07-01" && s.End == "2024-12-31") || (s.Start == "2025-01-02" && s.End == "2025-12-31")) {
+			return errors.New("multiyear replay requires the frozen July-December 2024 or full 2025 period")
+		}
+		maxDays, maxCash = 365, 15_000_000
+	}
+	if err != nil || end.Before(start) || end.Sub(start) > time.Duration(maxDays)*24*time.Hour {
 		return errors.New("invalid replay date envelope")
 	}
-	if s.InitialCash <= 0 || s.InitialCash > 8_000_000 || s.PeerReserve < 0 || s.PeerReserve >= s.InitialCash {
+	if s.InitialCash <= 0 || s.InitialCash > maxCash || s.PeerReserve < 0 || s.PeerReserve >= s.InitialCash {
 		return errors.New("invalid initial capital or peer reservation")
 	}
 	defaultConfig := wheel.DefaultConfig()
@@ -189,6 +196,19 @@ func (r *replay) init() error {
 		validationConfig.PutMinDelta = s.Config.PutMaxDelta
 		defaultConfig.PutMinDelta = 0
 		defaultConfig.PutMaxDelta = s.Config.PutMaxDelta
+	case ResearchMultiyearROI:
+		if s.Config.StrategyPreset == "" || s.Config.MaxCollateral != 15_000_000 || s.PeerReserve != 0 || len(s.PeerSymbols) != 0 {
+			return errors.New("multiyear replay requires a named preset, $150,000 research ceiling and no peer inventory or reservation")
+		}
+		var err error
+		defaultConfig, err = defaultConfig.WithStrategyPreset(s.Config.StrategyPreset)
+		if err != nil {
+			return err
+		}
+		defaultConfig.MaxCollateral = 15_000_000
+		// Only this exact offline variant changes the collateral envelope.
+		// Validate every other field through the unchanged production gate.
+		validationConfig.MaxCollateral = 8_000_000
 	default:
 		return errors.New("unknown research variant")
 	}
@@ -199,8 +219,12 @@ func (r *replay) init() error {
 		return errors.New("simulation cannot bind production accounts, credentials or coordinator")
 	}
 	// Fee stress applies to the frozen baseline or a separately named study.
-	if s.Config.Fee != 100 && s.Config.Fee != 200 {
-		return errors.New("fee must be baseline $1 or explicit $2 stress")
+	validFee := s.Config.Fee == 100 || s.Config.Fee == 200
+	if s.ResearchVariant == ResearchMultiyearROI {
+		validFee = s.Config.Fee == 6 || s.Config.Fee == 200
+	}
+	if !validFee {
+		return errors.New("fee must match the declared offline cost case")
 	}
 	defaultConfig.Fee = s.Config.Fee
 	a, err := json.Marshal(defaultConfig)
@@ -216,6 +240,9 @@ func (r *replay) init() error {
 	}
 	if s.ResearchVariant == ResearchPutRiskCap {
 		r.report.Assumptions = append(r.report.Assumptions, fmt.Sprintf("Separate put-risk study: verified strictly negative put delta with absolute cap %.2f and no positive floor; nearest weekly expiry and net premium/collateral/calendar-day ranking retained. Calls and all other strategy gates are unchanged. Delta is a sensitivity proxy, not an assignment probability.", s.Config.PutMaxDelta))
+	}
+	if s.ResearchVariant == ResearchMultiyearROI {
+		r.report.Assumptions = append(r.report.Assumptions, "Separate continuous multiyear confirmation: the named frozen ROI preset and $150,000 offline ceiling apply to the declared ten-symbol universe. The observed current cash seed is a counterfactual, not historical account capital. Standard five-minute scanning and all chain/OI/Greek/continuous execution/settlement gates remain required. Six-cent or $2 fees are modeled; this path does not apply the endpoint diagnostic's additional one-cent price allowance or qualify its returns.")
 	}
 	seen := map[string]bool{}
 	for _, symbol := range s.PeerSymbols {

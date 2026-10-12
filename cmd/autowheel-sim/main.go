@@ -44,7 +44,7 @@ func run() error {
 		source = f
 	}
 	hash := sha256.New()
-	for _, name := range []string{"types.go", "strategy.go", "engine.go", "calendar.go"} {
+	for _, name := range []string{"types.go", "strategy.go", "presets.go", "engine.go", "calendar.go"} {
 		content, err := os.ReadFile(filepath.Join(*root, "internal", "wheel", name))
 		if err != nil {
 			return err
@@ -55,7 +55,7 @@ func run() error {
 	report := simulation.Replay(source)
 	report.StrategySHA256 = hex.EncodeToString(hash.Sum(nil))
 	hash.Reset()
-	for _, path := range []string{"internal/simulation/types.go", "internal/simulation/replay.go", "internal/simulation/selection_omission.go", "internal/simulation/fixture.go", "cmd/autowheel-sim/main.go"} {
+	for _, path := range []string{"internal/simulation/types.go", "internal/simulation/replay.go", "internal/simulation/multiyear.go", "internal/simulation/selection_omission.go", "internal/simulation/fixture.go", "cmd/autowheel-sim/main.go"} {
 		content, err := os.ReadFile(filepath.Join(*root, path))
 		if err != nil {
 			return err
@@ -64,6 +64,20 @@ func run() error {
 		hash.Write(content)
 	}
 	report.EngineSHA256 = hex.EncodeToString(hash.Sum(nil))
+	executable, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	file, err := os.Open(executable)
+	if err != nil {
+		return err
+	}
+	hash.Reset()
+	_, err = io.Copy(hash, file)
+	if err = errors.Join(err, file.Close()); err != nil {
+		return err
+	}
+	report.ExecutableSHA256 = hex.EncodeToString(hash.Sum(nil))
 	if *blocker != "" {
 		report.Blockers = append(report.Blockers, *blocker)
 		report.Status = "blocked"

@@ -78,6 +78,17 @@ American early exercise, settlement delays or continuous pending-order fills.
 Do not represent its output as qualified historical performance or a completed
 strategy promotion.
 
+Continuous confirmation uses `cmd/autowheel-sim` with the explicit spec variant
+`calendar_2024_2025_roi_v1`. It accepts the same exact periods, ten symbols,
+named presets, three slots, observed cash seed and $150,000 offline ceiling.
+It requires the native five-minute decision schedule, complete chains, causal
+OI/Greeks and continuous pending-order observations. Its fee cases are six cents
+and $2; it does not apply the weekly endpoint diagnostic's extra one-cent
+allowance. Treat this as a separate execution model, not the frozen development
+metric. Empty or incomplete input produces no performance. Reports pin the
+preset source, engine source and executing binary. The declared source hashes
+still require independent verification against the built executable and data.
+
 ## Preparing a switch
 
 The implementation supports these presets, but they are research candidates

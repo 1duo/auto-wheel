@@ -187,6 +187,7 @@ type Report struct {
 	InputSHA256        string       `json:"input_sha256,omitempty"`
 	StrategySHA256     string       `json:"strategy_sha256,omitempty"`
 	EngineSHA256       string       `json:"simulation_engine_sha256,omitempty"`
+	ExecutableSHA256   string       `json:"executable_sha256,omitempty"`
 	Blockers           []string     `json:"blockers,omitempty"`
 	Assumptions        []string     `json:"assumptions"`
 	ExpectedDecisions  int          `json:"expected_decisions"`
