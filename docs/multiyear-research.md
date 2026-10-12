@@ -50,6 +50,14 @@ session boundaries and matching symbol calendars. The entire original input
 is validated before slicing; each period starts flat with the same cash seed.
 Freeze the development choice before evaluating a later period.
 
+For a fixed-strategy universe comparison, add `--study-preset conservative-roi-v1`
+and `--study-symbols NVDA,IREN,NOW,AMD,AMZN,GOOGL,META,MSFT,PLTR,AVGO,NBIS,RKLB,COIN,MSTR,HOOD`.
+These flags require `--available-presets`; they leave the default ten-symbol
+and calendar-year paths unchanged. Replay the original ten with the same
+dates, seed and costs. Selecting additions from current IV is retrospective.
+The 2026 execution model uses non-penny increments for NOW before its
+[July 1 Penny Program addition](https://www.nasdaqtrader.com/MicroNews.aspx?id=OTA+2026-25).
+
 These outputs are endpoint diagnostics. They retain the European Greek proxy,
 bounded strike coverage, omitted OI filter, expiry-only exercise and immediate
 settlement assumptions. They cannot qualify historical returns or promote a

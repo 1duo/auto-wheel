@@ -59,8 +59,12 @@ type BatchQuery struct {
 
 // Validate rejects anything outside the bulk allowlist before any quote.
 func (q BatchQuery) Validate() error {
-	if q.Study != "" && q.Study != "calendar-2024-2025-v1" {
+	if q.Study != "" && q.Study != "calendar-2024-2025-v1" && q.Study != "fifteen-high-iv-2026-v1" {
 		return errors.New("unknown databento research study")
+	}
+	universe := miniUniverse
+	if q.Study == "fifteen-high-iv-2026-v1" {
+		universe = []string{"NBIS", "RKLB", "COIN", "MSTR", "HOOD"}
 	}
 	if len(q.Dataset) == 0 || len(q.Dataset) > 64 {
 		return errors.New("databento batch dataset invalid")
@@ -121,7 +125,7 @@ func (q BatchQuery) Validate() error {
 			if !ok {
 				return errors.New("databento batch scope is not cost-qualified")
 			}
-			if !slices.Contains(miniUniverse, raw) {
+			if !slices.Contains(universe, raw) {
 				return errors.New("databento batch scope is not cost-qualified")
 			}
 		} else if isRawOPRA {
@@ -129,19 +133,19 @@ func (q BatchQuery) Validate() error {
 			if !ok {
 				return errors.New("databento batch scope is not cost-qualified")
 			}
-			if !slices.Contains(miniUniverse, strings.TrimSpace(root)) {
+			if !slices.Contains(universe, strings.TrimSpace(root)) {
 				return errors.New("databento batch scope is not cost-qualified")
 			}
 			if s[13:21] == "00000000" {
 				return errors.New("databento batch scope is not cost-qualified")
 			}
 		} else {
-			if !slices.Contains(miniUniverse, s) {
+			if !slices.Contains(universe, s) {
 				return errors.New("databento batch scope is not cost-qualified")
 			}
 		}
 	}
-	if q.Study != "" {
+	if q.Study == "calendar-2024-2025-v1" {
 		for _, s := range q.Symbols {
 			root := s
 			if opra && !isRawOPRA {
@@ -171,7 +175,22 @@ func (q BatchQuery) Validate() error {
 	if !start.Before(end) {
 		return errors.New("databento batch time range invalid")
 	}
-	if q.Study != "" {
+	if q.Study == "fifteen-high-iv-2026-v1" {
+		if start.Before(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)) || end.After(time.Date(2026, 10, 10, 0, 0, 0, 0, time.UTC)) {
+			return errors.New("fifteen-symbol research window outside frozen 2026 coverage")
+		}
+		if summary {
+			if end.Sub(start) > 62*24*time.Hour || start.Hour() != 0 || start.Minute() != 0 || start.Second() != 0 || start.Nanosecond() != 0 || end.Hour() != 0 || end.Minute() != 0 || end.Second() != 0 || end.Nanosecond() != 0 {
+				return errors.New("fifteen-symbol official-close slices require bounded midnight windows")
+			}
+			return nil
+		}
+		if end.Sub(start) > 24*time.Hour {
+			return errors.New("fifteen-symbol acquisitions require bounded daily slices")
+		}
+		return nil
+	}
+	if q.Study == "calendar-2024-2025-v1" {
 		if start.Before(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)) || end.After(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)) {
 			return errors.New("calendar-year research window outside 2024-2025")
 		}

@@ -22,7 +22,7 @@ func modelOrder(d day, q quote, allowance int64) (order, bool) {
 	if allowance < 0 {
 		limit = 0
 	} else if limit > 0 {
-		limit -= limit % pennyIncrement(limit)
+		limit -= limit % orderIncrement(d.Date, q.Contract, limit)
 	}
 	o := order{Date: d.Date, Contract: q.Contract, DecisionNS: d.Entry.At.UnixNano(), DecisionBid: q.Bid,
 		DecisionQuoteNS: q.ReceiveNS, Limit: limit, Status: "unfilled_no_observed_first_book"}
@@ -66,6 +66,19 @@ func pennyIncrement(price int64) int64 {
 		return 1
 	}
 	return 5
+}
+
+// NOW entered the Penny Program on July 1, 2026. Earlier 2026 simple
+// orders use five cents below $3 and ten cents at or above $3.
+// https://www.nasdaqtrader.com/MicroNews.aspx?id=OTA+2026-25
+func orderIncrement(date, contract string, price int64) int64 {
+	if date >= "2026-01-01" && date < "2026-07-01" && strings.HasPrefix(contract, "NOW   ") {
+		if price < 300 {
+			return 5
+		}
+		return 10
+	}
+	return pennyIncrement(price)
 }
 
 func studyMonths(first, last string) []string {
@@ -346,13 +359,15 @@ func run() error {
 	availablePresets := flag.Bool("available-presets", false, "compare four fixed research presets on finished 2026 endpoint inputs; always unqualified")
 	studyStart := flag.String("study-start", "", "first finished session for an independent available-presets replay")
 	studyEnd := flag.String("study-end", "", "last finished session for an independent available-presets replay")
+	studySymbols := flag.String("study-symbols", "", "comma-separated frozen 2026 research symbols; requires available-presets")
+	studyPreset := flag.String("study-preset", "", "one frozen research preset; requires available-presets")
 	calendarYear := flag.Int("calendar-year", 0, "2024 or 2025 shared portfolio with frozen research presets")
 	frozenSelection := flag.String("frozen-selection", "", "2024-only frozen selection required for the 2025 evaluation")
 	planOnly := flag.Bool("plan-only", false, "write the frozen calendar-year schedule and strategy plan without reading market data")
 	seed := flag.Int64("starting-cash-cents", 0, "observed cash seed for shared portfolio")
 	ceiling := flag.Int64("max-collateral-cents", 15_000_000, "shared portfolio exposure ceiling; puts remain cash-secured")
 	flag.Parse()
-	if (*availablePresets && (!*portfolio || *calendarYear != 0 || *planOnly || *endpoint || *frozenSelection != "")) || (!*availablePresets && (*studyStart != "" || *studyEnd != "")) {
+	if (*availablePresets && (!*portfolio || *calendarYear != 0 || *planOnly || *endpoint || *frozenSelection != "")) || (!*availablePresets && (*studyStart != "" || *studyEnd != "" || *studySymbols != "" || *studyPreset != "")) {
 		return errors.New("available-presets requires the finished shared-portfolio endpoint path; period bounds require available-presets")
 	}
 	if *planOnly {
@@ -369,7 +384,7 @@ func run() error {
 			return runCalendarYearPortfolio(*path, *output, *seed, *ceiling, *calendarYear, *frozenSelection)
 		}
 		if *availablePresets {
-			return runPortfolioScope(*path, *output, *seed, *ceiling, true, *studyStart, *studyEnd)
+			return runPortfolioUniverse(*path, *output, *seed, *ceiling, true, *studyStart, *studyEnd, *studySymbols, *studyPreset)
 		}
 		return runPortfolio(*path, *output, *seed, *ceiling)
 	}

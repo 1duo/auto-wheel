@@ -166,7 +166,7 @@ func portfolioCandidates(in input, index int, a *account, base profile, fee, all
 		if limit <= 0 {
 			continue
 		}
-		limit -= limit % pennyIncrement(limit)
+		limit -= limit % orderIncrement(d.Date, q.Contract, limit)
 		numerator, capital := limit*100-fee, q.Strike*100
 		if numerator <= 0 {
 			continue
@@ -369,6 +369,36 @@ func runPortfolio(root, output string, seed, ceiling int64) error {
 }
 
 func runPortfolioScope(root, output string, seed, ceiling int64, availablePresets bool, first, last string) error {
+	return runPortfolioUniverse(root, output, seed, ceiling, availablePresets, first, last, "", "")
+}
+
+func runPortfolioUniverse(root, output string, seed, ceiling int64, availablePresets bool, first, last, symbolList, presetID string) error {
+	if !availablePresets && (symbolList != "" || presetID != "") {
+		return errors.New("custom research universe and preset require available-presets")
+	}
+	symbols, err := availableStudySymbols(symbolList)
+	if err != nil {
+		return err
+	}
+	profiles := []profile{}
+	if availablePresets {
+		profiles = calendarYearProfiles()
+		if presetID != "" {
+			profiles = slices.DeleteFunc(profiles, func(p profile) bool { return p.ID != presetID })
+			if len(profiles) != 1 {
+				return errors.New("unknown frozen research preset")
+			}
+		}
+	} else {
+		for _, mode := range []wheel.SelectionMode{wheel.SelectionConservative, wheel.SelectionBalanced, "adaptive"} {
+			p := baseline(mode)
+			if mode == "adaptive" {
+				p = baseline(wheel.SelectionBalanced)
+				p.ID = "cycle-adaptive-v1"
+			}
+			profiles = append(profiles, p)
+		}
+	}
 	inputs, pins := []input{}, map[string]string{}
 	read := func(path string, v any) error {
 		b, err := os.ReadFile(path)
@@ -382,7 +412,7 @@ func runPortfolioScope(root, output string, seed, ceiling int64, availablePreset
 		pins[path] = hex.EncodeToString(digest[:])
 		return json.Unmarshal(b, v)
 	}
-	for _, symbol := range portfolioSymbols {
+	for _, symbol := range symbols {
 		var in input
 		if err := read(filepath.Join(root, "study-v2", "inputs", symbol+".json"), &in); err != nil {
 			return err
@@ -434,18 +464,6 @@ func runPortfolioScope(root, output string, seed, ceiling int64, availablePreset
 			return err
 		}
 	}
-	profiles := []profile{}
-	for _, mode := range []wheel.SelectionMode{wheel.SelectionConservative, wheel.SelectionBalanced, "adaptive"} {
-		p := baseline(mode)
-		if mode == "adaptive" {
-			p = baseline(wheel.SelectionBalanced)
-			p.ID = "cycle-adaptive-v1"
-		}
-		profiles = append(profiles, p)
-	}
-	if availablePresets {
-		profiles = calendarYearProfiles()
-	}
 	results := []map[string]any{}
 	for _, p := range profiles {
 		for _, cost := range [][2]int64{{6, 0}, {200, 1}} {
@@ -468,6 +486,12 @@ func runPortfolioScope(root, output string, seed, ceiling int64, availablePreset
 	report := map[string]any{"schema": "AutoWheelSharedPortfolioEndpointStudyV1", "start": inputs[0].Start, "end": inputs[0].End, "symbols": portfolioSymbols, "starting_cash_cents": seed, "max_managed_symbols": 3, "max_contracts_per_symbol": 1, "max_collateral_cents": ceiling, "source_sha256": pins, "executable_sha256": hex.EncodeToString(digest[:]), "results": results, "production_qualified": false, "ranking_policy": "All eligible nearest-expiry contracts ranked by net quoted ROI per day, then symbol and contract. Put denominator: strike collateral. Call numerator: signed time value less fee; denominator: decision stock midpoint. Original delta bands retained; delta-first ordering overridden in this offline study. Admissions frozen before observing executions; unfilled selections are not replaced.", "valuation_policy": "Owned stock: official unadjusted close, aggregate position value floored to cents. Native stock bid sensitivity retained. Fresh native option asks preferred; hash-pinned EOD supplements only for missing marks. Supplement publication clocks do not meet strict 4pm freshness. Missing marks remain null.", "limitations": []string{"Weekly decisions only; 194 sessions, 40 entry dates. Bounded strikes, not complete chains.", "European modeled Greeks; fixed 4% pricing rate and zero dividend yield; open-interest filtering omitted.", "Expiry-only exercise at one cent ITM, no early exercise or settlement delay. Observed ordinary dividends accrue at ex-date and pay on payment date.", "Contemporary universe selected from July-September outcomes; retrospective, not blind out-of-sample.", "Six-cent fee is a fixed retail estimate, not an invoice; $2 plus one-cent allowance is a separate cost/path sensitivity. No cash interest or taxes."}}
 	if availablePresets {
 		report["schema"] = "AutoWheelAvailablePresetEndpointStudyV1"
+		report["symbols"] = symbols
+		report["selected_preset"] = presetID
+		report["limitations"].([]string)[3] = "Retrospective research universe; universe selection has no blind out-of-sample qualification."
+		if symbolList != "" {
+			report["universe_policy"] = "Caller-frozen subset of the bounded 2026 research universe. Custom membership does not qualify historical performance or authorize production deployment."
+		}
 		report["historical_performance_qualified"] = false
 		report["strategy_promotion_qualified"] = false
 		report["sessions"] = len(inputs[0].Days)

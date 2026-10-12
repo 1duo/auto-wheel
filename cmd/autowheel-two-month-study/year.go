@@ -61,8 +61,7 @@ func yearToDateSchedule() (sessions, entries []string) {
 }
 
 func validateYearToDateInput(in input) error {
-	symbols := []string{"NVDA", "IREN", "NOW", "AMD", "AMZN", "GOOGL", "META", "MSFT", "PLTR", "AVGO"}
-	if in.Start != "2026-01-02" || in.End != "2026-10-09" || !slices.Contains(symbols, in.Symbol) || len(in.Sources) == 0 {
+	if in.Start != "2026-01-02" || in.End != "2026-10-09" || !slices.Contains(finished2026Symbols, in.Symbol) || len(in.Sources) == 0 {
 		return errors.New("incorrect year-to-date diagnostic scope")
 	}
 	sessions, entries := yearToDateSchedule()

@@ -206,7 +206,7 @@ func simulateEndpoint(in input, p profile, fee, allowance int64) (endpointResult
 				}
 				if ok && in.Schema == "AutoWheelYearToDateEndpointInputV1" {
 					limit := q.Bid - allowance
-					limit -= limit % pennyIncrement(limit)
+					limit -= limit % orderIncrement(d.Date, q.Contract, limit)
 					if limit <= 0 || limit*100 <= fee {
 						r.Rejections["nonpositive_net_fixed_limit"]++
 						ok = false

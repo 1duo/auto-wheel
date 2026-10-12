@@ -363,7 +363,7 @@ func selectContract(symbol string, p profile, fee int64, s sample, cost int64) (
 		models[q.Contract], originals[q.Contract] = iv, q
 		quotes = append(quotes, wheel.Quote{Option: wheel.Option{ID: q.Contract, Symbol: symbol, Kind: q.Kind, Expiry: q.Expiry,
 			Strike: wheel.Cents(q.Strike)}, Bid: wheel.Cents(q.Bid), Ask: wheel.Cents(q.Ask),
-			Spot: wheel.Cents(spot), Delta: iv.Delta, BidSize: q.BidSize, OI: 0, Tick: wheel.Cents(pennyIncrement(q.Bid)),
+			Spot: wheel.Cents(spot), Delta: iv.Delta, BidSize: q.BidSize, OI: 0, Tick: wheel.Cents(orderIncrement(s.At.In(wheel.Eastern).Format("2006-01-02"), q.Contract, q.Bid)),
 			Standard: true, Tradable: true, Weekly: true, At: time.Unix(0, q.ReceiveNS), UnderlyingAt: s.Stock.At})
 	}
 	candidate, ok := wheel.Select(c, symbol, kind, quotes, wheel.Cents(cost), s.At)

@@ -3,8 +3,29 @@ package main
 import (
 	"errors"
 	"slices"
+	"strings"
 	"time"
 )
+
+var finished2026Symbols = []string{"NVDA", "IREN", "NOW", "AMD", "AMZN", "GOOGL", "META", "MSFT", "PLTR", "AVGO", "NBIS", "RKLB", "COIN", "MSTR", "HOOD"}
+
+func availableStudySymbols(value string) ([]string, error) {
+	if value == "" {
+		return slices.Clone(portfolioSymbols), nil
+	}
+	symbols := strings.Split(value, ",")
+	if len(symbols) > 15 {
+		return nil, errors.New("available-data universe exceeds fifteen symbols")
+	}
+	seen := make(map[string]bool, len(symbols))
+	for _, symbol := range symbols {
+		if !slices.Contains(finished2026Symbols, symbol) || seen[symbol] {
+			return nil, errors.New("available-data symbols must be distinct exact members of the frozen 2026 research universe")
+		}
+		seen[symbol] = true
+	}
+	return symbols, nil
+}
 
 // clipPortfolioInputs preserves the original inputs and rejects absent or
 // inconsistent calendars. Validation of full source coverage happens first.
