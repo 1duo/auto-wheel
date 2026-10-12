@@ -343,12 +343,18 @@ func run() error {
 	output := flag.String("output", "", "exclusive report")
 	endpoint := flag.Bool("endpoint-recovery", false, "separate baseline-only endpoint diagnostic; missing daily equity remains null")
 	portfolio := flag.Bool("shared-portfolio", false, "offline ten-symbol ROI-ranked account with three managed slots")
+	availablePresets := flag.Bool("available-presets", false, "compare four fixed research presets on finished 2026 endpoint inputs; always unqualified")
+	studyStart := flag.String("study-start", "", "first finished session for an independent available-presets replay")
+	studyEnd := flag.String("study-end", "", "last finished session for an independent available-presets replay")
 	calendarYear := flag.Int("calendar-year", 0, "2024 or 2025 shared portfolio with frozen research presets")
 	frozenSelection := flag.String("frozen-selection", "", "2024-only frozen selection required for the 2025 evaluation")
 	planOnly := flag.Bool("plan-only", false, "write the frozen calendar-year schedule and strategy plan without reading market data")
 	seed := flag.Int64("starting-cash-cents", 0, "observed cash seed for shared portfolio")
 	ceiling := flag.Int64("max-collateral-cents", 15_000_000, "shared portfolio exposure ceiling; puts remain cash-secured")
 	flag.Parse()
+	if (*availablePresets && (!*portfolio || *calendarYear != 0 || *planOnly || *endpoint || *frozenSelection != "")) || (!*availablePresets && (*studyStart != "" || *studyEnd != "")) {
+		return errors.New("available-presets requires the finished shared-portfolio endpoint path; period bounds require available-presets")
+	}
 	if *planOnly {
 		if *path != "" || *output == "" || flag.NArg() != 0 || !*portfolio {
 			return errors.New("plan-only requires shared-portfolio, calendar-year and output; no input")
@@ -361,6 +367,9 @@ func run() error {
 	if *portfolio {
 		if *calendarYear != 0 {
 			return runCalendarYearPortfolio(*path, *output, *seed, *ceiling, *calendarYear, *frozenSelection)
+		}
+		if *availablePresets {
+			return runPortfolioScope(*path, *output, *seed, *ceiling, true, *studyStart, *studyEnd)
 		}
 		return runPortfolio(*path, *output, *seed, *ceiling)
 	}

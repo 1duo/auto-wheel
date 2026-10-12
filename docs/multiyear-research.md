@@ -41,6 +41,21 @@ held-out check prevents promotion and does not start another tuning round.
 
 ## Running offline
 
+Finished 2026 endpoint inputs can also compare the four fixed presets without
+relaxing the 2024/2025 qualification gates. Use `--shared-portfolio
+--available-presets` with the existing finished-input directory, an explicit
+`--starting-cash-cents` seed and an exclusive output path. Optional
+`--study-start YYYY-MM-DD --study-end YYYY-MM-DD` bounds require exact observed
+session boundaries and matching symbol calendars. The entire original input
+is validated before slicing; each period starts flat with the same cash seed.
+Freeze the development choice before evaluating a later period.
+
+These outputs are endpoint diagnostics. They retain the European Greek proxy,
+bounded strike coverage, omitted OI filter, expiry-only exercise and immediate
+settlement assumptions. They cannot qualify historical returns or promote a
+live strategy. Reused evaluation periods and retrospective universe selection
+must be disclosed. Missing marks remain null.
+
 Conditional pricing diagnostics can run separately with
 `go build -o bin/autowheel-volmesh-observation ./cmd/autowheel-volmesh-observation`,
 then `bin/autowheel-volmesh-observation --input /private/models.json

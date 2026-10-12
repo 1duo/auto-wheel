@@ -365,6 +365,10 @@ func simulatePortfolioWithActions(inputs []input, base profile, seed, fee, allow
 }
 
 func runPortfolio(root, output string, seed, ceiling int64) error {
+	return runPortfolioScope(root, output, seed, ceiling, false, "", "")
+}
+
+func runPortfolioScope(root, output string, seed, ceiling int64, availablePresets bool, first, last string) error {
 	inputs, pins := []input{}, map[string]string{}
 	read := func(path string, v any) error {
 		b, err := os.ReadFile(path)
@@ -385,6 +389,9 @@ func runPortfolio(root, output string, seed, ceiling int64) error {
 		}
 		if in.Symbol != symbol {
 			return errors.New("portfolio input symbol mismatch")
+		}
+		if availablePresets && in.Schema != "AutoWheelYearToDateEndpointInputV1" {
+			return errors.New("available-presets requires finished 2026 YTD inputs; calendar-year action gates cannot be bypassed")
 		}
 		if err := validateEndpointInput(in); err != nil {
 			return fmt.Errorf("%s: %w", symbol, err)
@@ -420,13 +427,27 @@ func runPortfolio(root, output string, seed, ceiling int64) error {
 		}
 		supplements[o.Date+"/"+o.Contract] = o.Ask
 	}
-	results := []map[string]any{}
+	if first != "" || last != "" {
+		var err error
+		inputs, err = clipPortfolioInputs(inputs, first, last)
+		if err != nil {
+			return err
+		}
+	}
+	profiles := []profile{}
 	for _, mode := range []wheel.SelectionMode{wheel.SelectionConservative, wheel.SelectionBalanced, "adaptive"} {
 		p := baseline(mode)
 		if mode == "adaptive" {
 			p = baseline(wheel.SelectionBalanced)
 			p.ID = "cycle-adaptive-v1"
 		}
+		profiles = append(profiles, p)
+	}
+	if availablePresets {
+		profiles = calendarYearProfiles()
+	}
+	results := []map[string]any{}
+	for _, p := range profiles {
 		for _, cost := range [][2]int64{{6, 0}, {200, 1}} {
 			r, err := simulatePortfolio(inputs, p, seed, cost[0], cost[1], ceiling, dividends.Facts, supplements)
 			if err != nil {
@@ -445,6 +466,13 @@ func runPortfolio(root, output string, seed, ceiling int64) error {
 	}
 	digest := sha256.Sum256(b)
 	report := map[string]any{"schema": "AutoWheelSharedPortfolioEndpointStudyV1", "start": inputs[0].Start, "end": inputs[0].End, "symbols": portfolioSymbols, "starting_cash_cents": seed, "max_managed_symbols": 3, "max_contracts_per_symbol": 1, "max_collateral_cents": ceiling, "source_sha256": pins, "executable_sha256": hex.EncodeToString(digest[:]), "results": results, "production_qualified": false, "ranking_policy": "All eligible nearest-expiry contracts ranked by net quoted ROI per day, then symbol and contract. Put denominator: strike collateral. Call numerator: signed time value less fee; denominator: decision stock midpoint. Original delta bands retained; delta-first ordering overridden in this offline study. Admissions frozen before observing executions; unfilled selections are not replaced.", "valuation_policy": "Owned stock: official unadjusted close, aggregate position value floored to cents. Native stock bid sensitivity retained. Fresh native option asks preferred; hash-pinned EOD supplements only for missing marks. Supplement publication clocks do not meet strict 4pm freshness. Missing marks remain null.", "limitations": []string{"Weekly decisions only; 194 sessions, 40 entry dates. Bounded strikes, not complete chains.", "European modeled Greeks; fixed 4% pricing rate and zero dividend yield; open-interest filtering omitted.", "Expiry-only exercise at one cent ITM, no early exercise or settlement delay. Observed ordinary dividends accrue at ex-date and pay on payment date.", "Contemporary universe selected from July-September outcomes; retrospective, not blind out-of-sample.", "Six-cent fee is a fixed retail estimate, not an invoice; $2 plus one-cent allowance is a separate cost/path sensitivity. No cash interest or taxes."}}
+	if availablePresets {
+		report["schema"] = "AutoWheelAvailablePresetEndpointStudyV1"
+		report["historical_performance_qualified"] = false
+		report["strategy_promotion_qualified"] = false
+		report["sessions"] = len(inputs[0].Days)
+		report["period_policy"] = "Validate the entire finished input first, then replay the exact requested session slice with an independent flat cash seed. Remaining reference maps do not supply decisions. This is an unqualified endpoint diagnostic."
+	}
 	raw, err := json.MarshalIndent(report, "", "  ")
 	if err != nil {
 		return err
