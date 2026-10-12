@@ -120,6 +120,54 @@ func TestNoDivCallMatchesEuropean(t *testing.T) {
 	}
 }
 
+// Independent normal-density Simpson quadrature, refined from 10000 to
+// 20000 intervals per unit, supplies these golden values without Erfc.
+// Refinement differences were <1e-10 price and <1e-12 delta; |d|>12 has
+// normal tail <2e-33. These invented five-day cases expose false grid diffusion.
+func TestNearStrikeLowVolCallMatchesIndependentQuadrature(t *testing.T) {
+	cases := []struct{ spot, sigma, price, delta float64 }{
+		{99.93, .0001, .00005230610621431708, .09537064151590835},
+		{99.93, .001, .003940765182775863, .4479742769903164},
+		{99.96, .0001, .028469699480936583, 1},
+		{99.96, .001, .028498429516943702, .9925300090324343},
+		{100.04, .0001, .10846969948094909, 1},
+		{100.04, .001, .10846969948094909, 1},
+	}
+	for _, c := range cases {
+		in := validInput()
+		in.SpotUSD, in.Sigma = c.spot, c.sigma
+		got, err := Price(in, Grid{TimeSteps: 512, SpaceSteps: 1200})
+		if err != nil {
+			t.Fatalf("spot=%v sigma=%v: %v", c.spot, c.sigma, err)
+		}
+		if math.Abs(got.PriceUSD-c.price) > 1e-8 || math.Abs(got.Delta-c.delta) > 1e-8 {
+			t.Fatalf("spot=%v sigma=%v: got=%+v want price=%v delta=%v", c.spot, c.sigma, got, c.price, c.delta)
+		}
+	}
+}
+
+func TestAnalyticalCallIdentityDoesNotBypassExerciseOrCash(t *testing.T) {
+	put := validInput()
+	put.Kind, put.SpotUSD, put.Sigma = Put, 50, .01
+	negativeCall := validInput()
+	negativeCall.SpotUSD, negativeCall.Sigma, negativeCall.Rate = 150, .01, -.05
+	for _, in := range []Input{put, negativeCall} {
+		got, err := Price(in, Grid{TimeSteps: 512, SpaceSteps: 1200})
+		if err != nil || got.PriceUSD < 50-1e-6 {
+			t.Fatalf("exercise region kind=%s rate=%v: got=%+v err=%v", in.Kind, in.Rate, got, err)
+		}
+	}
+	cashCall := validInput()
+	cashCall.SpotUSD, cashCall.Sigma = 150, .01
+	cashCall.Dividends = []CashDividend{{AmountUSD: 5, ExAt: cashCall.Now.Add(24 * time.Hour)}}
+	got, err := Price(cashCall, Grid{TimeSteps: 512, SpaceSteps: 1200})
+	T := float64(cashCall.Expiry.Sub(cashCall.Now).Nanoseconds()) / float64(yearNs)
+	withoutCash := bsmEuroCall(150, 100, .05, .01, T)
+	if err != nil || got.PriceUSD < 50-1e-6 || withoutCash-got.PriceUSD < .01 {
+		t.Fatalf("cash call got=%+v no-cash price=%v err=%v", got, withoutCash, err)
+	}
+}
+
 func TestExactSubsecondEventPreserved(t *testing.T) {
 	now := time.Date(2026, time.April, 6, 13, 35, 0, 123456789, time.UTC)
 	expiry := now.Add(2 * 24 * time.Hour).Add(987654321 * time.Nanosecond)

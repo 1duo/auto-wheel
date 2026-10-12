@@ -1,6 +1,7 @@
-// Package americanoption is an offline research finite-difference
-// American obstacle solver for q=0 with explicit deterministic positive
-// cash dividends at exact time.Time instants.
+// Package americanoption is an offline research American option solver
+// for q=0 with explicit deterministic positive cash dividends at exact
+// time.Time instants. No-cash calls at nonnegative rates use the analytical
+// no-early-exercise identity; all other cases use the FD obstacle solver.
 //
 // Scope: synthetic numeric research only. Model arithmetic uses USD floats;
 // ledger money is never computed here. An explicit empty dividend schedule
@@ -35,7 +36,7 @@ import (
 
 // ModelID identifies this offline research American FD engine.
 // It is distinct from the European continuous-q model.
-const ModelID = "FD-American-cashDiv-q0-v1"
+const ModelID = "American-cashDiv-q0-analyticCall-FD-v2"
 
 // Kind is the option exercise kind (American).
 type Kind string
@@ -111,6 +112,16 @@ func Price(in Input, grid Grid) (Value, error) {
 	T, divT, totalCash, err := validate(in, grid)
 	if err != nil {
 		return Value{}, err
+	}
+	// With q=0, no cash jumps and r>=0, waiting dominates exercising a
+	// call at every instant. Its American price and spot delta therefore
+	// equal the European analytical values. This exact model identity
+	// avoids artificial upwind diffusion at low volatility. Never apply
+	// it to puts, negative-rate calls, or a nonempty cash schedule.
+	// Healy (2021), Proposition 1: https://arxiv.org/abs/2109.15157.
+	// Explicit zero model cash does not establish historical dividend absence.
+	if in.Kind == Call && in.Rate >= 0 && len(in.Dividends) == 0 {
+		return analyticNoCashCall(in, T)
 	}
 	r := in.Rate
 	sig := in.Sigma
@@ -248,6 +259,22 @@ func Price(in Input, grid Grid) (Value, error) {
 		return Value{}, fmt.Errorf("non-finite delta: %w", ErrNonConverged)
 	}
 	return Value{PriceUSD: price, Delta: delta}, nil
+}
+
+func analyticNoCashCall(in Input, T float64) (Value, error) {
+	width := in.Sigma * math.Sqrt(T)
+	// Separate logs avoid underflow in SpotUSD/StrikeUSD for extreme inputs.
+	d1 := (math.Log(in.SpotUSD) - math.Log(in.StrikeUSD) + (in.Rate+.5*in.Sigma*in.Sigma)*T) / width
+	d2 := d1 - width
+	cdf := func(x float64) float64 { return .5 * math.Erfc(-x/math.Sqrt2) }
+	value := Value{
+		PriceUSD: in.SpotUSD*cdf(d1) - in.StrikeUSD*math.Exp(-in.Rate*T)*cdf(d2),
+		Delta:    cdf(d1),
+	}
+	if !finite(value.PriceUSD) || !finite(value.Delta) || value.PriceUSD < 0 || value.PriceUSD > in.SpotUSD || value.Delta < 0 || value.Delta > 1 {
+		return Value{}, fmt.Errorf("analytical call cannot be represented: %w", ErrNonConverged)
+	}
+	return value, nil
 }
 
 // validate checks the envelope and returns tenor/contact data.
