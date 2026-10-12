@@ -169,6 +169,9 @@ func fresh(at, now time.Time, seconds int) bool {
 // Plan counts all account exposure, including unknown positions and equity
 // orders. Only explicitly owned inventory can receive a new covered call.
 func Plan(c Config, st State, s Snapshot, candidates []Candidate, now time.Time) ([]Candidate, error) {
+	if err := CheckOrderScope(c, st, s); err != nil {
+		return nil, err
+	}
 	mode, ok := selectionModeFor(c)
 	if !ok {
 		return nil, errors.New("unknown selection mode")

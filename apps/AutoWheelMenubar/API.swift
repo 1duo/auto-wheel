@@ -5,6 +5,16 @@ enum ServiceAction: String { case start, stop, restart, logs }
 
 struct OperatorAPI {
     let base = URL(string: "http://127.0.0.1:19841")!
+    var calendarURL: URL { base.appendingPathComponent("calendar") }
+    func calendarAvailable() async -> Bool {
+        var request = URLRequest(url: calendarURL)
+        request.httpMethod = "HEAD"
+        request.timeoutInterval = 3
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        guard let (_, response) = try? await URLSession.shared.data(for: request),
+              let http = response as? HTTPURLResponse else { return false }
+        return http.statusCode == 200 && http.mimeType == "text/html"
+    }
     func status() async throws -> WheelStatus {
         let data = try await request("/status")
         let status = try JSONDecoder().decode(WheelStatus.self, from: data)

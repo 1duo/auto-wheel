@@ -48,6 +48,9 @@ func Reconcile(st *State, s Snapshot, now time.Time) error {
 		if !o.Terminal() {
 			continue
 		}
+		if s.OrderCoveragePolicy == "exclusive_standard" && (o.ID == "" || len(st.CompletedOrders) >= 1024) {
+			return errors.New("completed order ownership cannot be retained; freeze")
+		}
 		if o.Filled == 1 {
 			p := st.Positions[symbol]
 			if in.Candidate.Kind == "put" {
@@ -65,6 +68,12 @@ func Reconcile(st *State, s Snapshot, now time.Time) error {
 			st.Positions[symbol] = p
 		} else if o.State == "filled" {
 			return errors.New("filled order has no filled quantity")
+		}
+		if s.OrderCoveragePolicy == "exclusive_standard" {
+			if st.CompletedOrders == nil {
+				st.CompletedOrders = map[string]OrderRecord{}
+			}
+			st.CompletedOrders[o.ID] = OrderRecord{Ref: in.Ref, Symbol: symbol, OptionID: in.Candidate.ID, At: in.At}
 		}
 		delete(st.Intents, symbol)
 	}
@@ -213,7 +222,7 @@ func Execute(ctx context.Context, c Config, st *State, store Store, b Broker, a 
 	if err != nil {
 		return err
 	}
-	if err = Reconcile(st, s, now()); err != nil {
+	if err = ReconcileForConfig(c, st, s, now()); err != nil {
 		return err
 	}
 	if err = store.Save(*st); err != nil {
@@ -237,6 +246,24 @@ func Execute(ctx context.Context, c Config, st *State, store Store, b Broker, a 
 	}
 	if err = b.Review(ctx, a); err != nil {
 		return err
+	}
+	if c.OrderCoveragePolicy == "exclusive_standard" {
+		// Review is not a reservation. Re-read all supported account facts after
+		// review and before writing the intent; no partial read can authorize it.
+		s, err = b.Snapshot(ctx)
+		if err != nil {
+			return err
+		}
+		if err = ReconcileForConfig(c, st, s, now()); err != nil {
+			return err
+		}
+		if err = store.Save(*st); err != nil {
+			return err
+		}
+		plan, err = Plan(c, *st, s, []Candidate{a}, now())
+		if err != nil || len(plan) != 1 {
+			return errors.Join(errors.New("account changed during broker review"), err)
+		}
 	}
 	if !fresh(a.At, now(), c.MaxQuoteAgeSeconds) || !fresh(a.UnderlyingAt, now(), c.MaxQuoteAgeSeconds) || !fresh(s.At, now(), c.MaxQuoteAgeSeconds) || !TradingWindow(now()) {
 		return errors.New("pre-submit data expired during review")

@@ -160,8 +160,14 @@ func auditAccount(ctx context.Context, c wheel.Config, token, dir string) error 
 		"tools":                tools, "read_counts": counts, "account_metadata": metadata,
 		"order_admission":             admission,
 		"advanced_order_tool_exposed": client.Supports("get_advanced_orders", ""),
-		"account_snapshot_complete":   snapshotErr == nil, "available_cash_cents": snapshot.AvailableCash,
-		"options": len(snapshot.Options), "orders": len(snapshot.Orders), "quarantined_symbols": snapshot.ExternalSymbols,
+		"account_snapshot_complete":   snapshotErr == nil && b.AccountInfo != nil && b.AccountInfo.SnapshotComplete,
+		"execution_snapshot_usable":   snapshotErr == nil,
+		"order_coverage_policy":       c.OrderCoveragePolicy,
+		"available_cash_cents":        snapshot.AvailableCash,
+		"options":                     len(snapshot.Options), "orders": len(snapshot.Orders), "quarantined_symbols": snapshot.ExternalSymbols,
+	}
+	if c.OrderCoveragePolicy == "exclusive_standard" {
+		summary["coverage_warning"] = wheel.StandardOrderWarning
 	}
 	if snapshotErr != nil {
 		summary["snapshot_error"] = snapshotErr.Error()

@@ -36,12 +36,15 @@ type BrokerClient interface {
 // AccountInfo is display-only evidence, never input to planning or ownership.
 // It remains useful when a complete tradable snapshot cannot be constructed.
 type AccountInfo struct {
-	At               time.Time     `json:"at"`
-	AccountLast4     string        `json:"account_last4"`
-	OptionsLevel     string        `json:"options_level"`
-	AvailableCash    wheel.Cents   `json:"available_cash_cents"`
-	Holdings         []HoldingInfo `json:"holdings"`
-	SnapshotComplete bool          `json:"snapshot_complete"`
+	At                      time.Time     `json:"at"`
+	AccountLast4            string        `json:"account_last4"`
+	OptionsLevel            string        `json:"options_level"`
+	AvailableCash           wheel.Cents   `json:"available_cash_cents"`
+	Holdings                []HoldingInfo `json:"holdings"`
+	SnapshotComplete        bool          `json:"snapshot_complete"`
+	ExecutionSnapshotUsable bool          `json:"execution_snapshot_usable"`
+	OrderCoveragePolicy     string        `json:"order_coverage_policy,omitempty"`
+	CoverageWarning         string        `json:"coverage_warning,omitempty"`
 }
 
 type HoldingInfo struct {
@@ -64,6 +67,11 @@ func (b *Broker) Snapshot(ctx context.Context) (wheel.Snapshot, error) {
 	}
 	started := time.Now()
 	s := wheel.Snapshot{Account: b.Config.Account}
+	if b.Config.OrderCoveragePolicy == "exclusive_standard" {
+		if err := b.Config.Validate(); err != nil {
+			return s, err
+		}
+	}
 	accounts, err := b.collection(ctx, "get_accounts", object{}, "accounts")
 	if err != nil {
 		return s, err
@@ -129,6 +137,14 @@ func (b *Broker) Snapshot(ctx context.Context) (wheel.Snapshot, error) {
 		return s, err
 	}
 	s.AvailableCash = max(0, min(cash, unleveraged)-pending-unsettled)
+	if b.Config.OrderCoveragePolicy == "exclusive_standard" {
+		for _, key := range []string{"crypto_value", "event_contracts_value", "fixed_income_value", "futures_value", "mutual_funds_value"} {
+			value, err := money(p, key)
+			if err != nil || value != 0 {
+				return s, fmt.Errorf("unsupported or unproven portfolio category %s in exclusive standard account", key)
+			}
+		}
+	}
 	args, err = b.scoped("get_equity_positions", object{})
 	if err != nil {
 		return s, err
@@ -242,7 +258,13 @@ func (b *Broker) Snapshot(ctx context.Context) (wheel.Snapshot, error) {
 		return s, errors.New("account snapshot collection exceeded freshness limit")
 	}
 	s.At = started
-	info.SnapshotComplete = true
+	s.OrderCoveragePolicy = b.Config.OrderCoveragePolicy
+	info.OrderCoveragePolicy = b.Config.OrderCoveragePolicy
+	info.ExecutionSnapshotUsable = true
+	info.SnapshotComplete = b.Config.OrderCoveragePolicy != "exclusive_standard"
+	if !info.SnapshotComplete {
+		info.CoverageWarning = wheel.StandardOrderWarning
+	}
 	return s, nil
 }
 
@@ -267,6 +289,13 @@ func (b *Broker) otherCashObligations(ctx context.Context, account object) error
 	for _, order := range orders {
 		if !sharedbroker.Terminal(text(order, "state")) {
 			return errors.New("working or unrecognized crypto order requires operator review")
+		}
+		if b.Config.OrderCoveragePolicy == "exclusive_standard" {
+			created, cErr := timestamp(order, "created_at")
+			updated, uErr := timestamp(order, "updated_at")
+			if cErr != nil || uErr != nil || !created.Before(b.Config.ExclusiveOrdersSince) || !updated.Before(b.Config.ExclusiveOrdersSince) {
+				return errors.New("outside crypto activity since native retirement or unproven timing; freeze")
+			}
 		}
 	}
 	positions, err := backend.Collection(ctx, "get_crypto_positions", "results", object{"rhs_account_number": text(account, "rhs_account_number")})
@@ -314,6 +343,9 @@ func (b *Broker) orderAdmissionCoverage(ctx context.Context) error {
 	}
 	if len(approvals) != 0 {
 		return errors.New("pending broker trade approvals require operator review")
+	}
+	if b.Config.OrderCoveragePolicy == "exclusive_standard" {
+		return nil
 	}
 	if !b.MCP.Supports("get_advanced_orders", "") {
 		return errors.New("advanced/OCO order coverage unavailable: MCP lacks get_advanced_orders")

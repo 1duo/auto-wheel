@@ -52,30 +52,32 @@ const (
 )
 
 type Config struct {
-	Account            string        `json:"account_number"`
-	TradePulseStateDir string        `json:"tradepulse_state_dir,omitempty"`
-	RetiredTradePulse  string        `json:"retired_tradepulse_handoff,omitempty"`
-	CoordinatorSocket  string        `json:"coordinator_socket,omitempty"`
-	CoordinatorPolicy  string        `json:"coordinator_policy_hash,omitempty"`
-	Symbols            []string      `json:"symbols"`
-	MaxSymbols         int           `json:"max_symbols"`
-	SymbolLimitScope   string        `json:"symbol_limit_scope"`
-	MaxCollateral      Cents         `json:"max_collateral_cents"`
-	Reserve            Cents         `json:"cash_reserve_cents"`
-	Fee                Cents         `json:"fee_per_contract_cents"`
-	MinBid             Cents         `json:"min_bid_cents"`
-	MinOI              int           `json:"min_open_interest"`
-	MaxSpreadBPS       int           `json:"max_spread_bps"`
-	PutMinDelta        float64       `json:"put_min_delta"`
-	PutMaxDelta        float64       `json:"put_max_delta"`
-	CallMinDelta       float64       `json:"call_min_delta"`
-	CallMaxDelta       float64       `json:"call_max_delta"`
-	AllowBelowCost     bool          `json:"allow_calls_below_cost"`
-	MaxQuoteAgeSeconds int           `json:"max_quote_age_seconds"`
-	MaxDays            int           `json:"max_dte_days"`
-	PollSeconds        int           `json:"poll_seconds"`
-	SelectionMode      SelectionMode `json:"selection_mode,omitempty"`
-	StrategyPreset     string        `json:"strategy_preset,omitempty"`
+	Account              string        `json:"account_number"`
+	OrderCoveragePolicy  string        `json:"order_coverage_policy,omitempty"`
+	ExclusiveOrdersSince time.Time     `json:"exclusive_orders_since,omitzero"`
+	TradePulseStateDir   string        `json:"tradepulse_state_dir,omitempty"`
+	RetiredTradePulse    string        `json:"retired_tradepulse_handoff,omitempty"`
+	CoordinatorSocket    string        `json:"coordinator_socket,omitempty"`
+	CoordinatorPolicy    string        `json:"coordinator_policy_hash,omitempty"`
+	Symbols              []string      `json:"symbols"`
+	MaxSymbols           int           `json:"max_symbols"`
+	SymbolLimitScope     string        `json:"symbol_limit_scope"`
+	MaxCollateral        Cents         `json:"max_collateral_cents"`
+	Reserve              Cents         `json:"cash_reserve_cents"`
+	Fee                  Cents         `json:"fee_per_contract_cents"`
+	MinBid               Cents         `json:"min_bid_cents"`
+	MinOI                int           `json:"min_open_interest"`
+	MaxSpreadBPS         int           `json:"max_spread_bps"`
+	PutMinDelta          float64       `json:"put_min_delta"`
+	PutMaxDelta          float64       `json:"put_max_delta"`
+	CallMinDelta         float64       `json:"call_min_delta"`
+	CallMaxDelta         float64       `json:"call_max_delta"`
+	AllowBelowCost       bool          `json:"allow_calls_below_cost"`
+	MaxQuoteAgeSeconds   int           `json:"max_quote_age_seconds"`
+	MaxDays              int           `json:"max_dte_days"`
+	PollSeconds          int           `json:"poll_seconds"`
+	SelectionMode        SelectionMode `json:"selection_mode,omitempty"`
+	StrategyPreset       string        `json:"strategy_preset,omitempty"`
 }
 
 func DefaultConfig() Config {
@@ -115,6 +117,16 @@ func (c Config) WithSelectionMode(mode SelectionMode) (Config, error) {
 }
 
 func (c Config) Validate() error {
+	if c.OrderCoveragePolicy != "" && c.OrderCoveragePolicy != "full" && c.OrderCoveragePolicy != "exclusive_standard" {
+		return errors.New("unknown order coverage policy")
+	}
+	if c.OrderCoveragePolicy == "exclusive_standard" {
+		if c.Account == "" || c.RetiredTradePulse == "" || c.CoordinatorSocket != "" || c.ExclusiveOrdersSince.IsZero() || c.ExclusiveOrdersSince.After(time.Now()) {
+			return errors.New("exclusive standard orders require a bound account, native retirement and its activity cutoff")
+		}
+	} else if !c.ExclusiveOrdersSince.IsZero() {
+		return errors.New("activity cutoff requires exclusive standard order policy")
+	}
 	if !c.validStrategyPreset() {
 		return errors.New("unknown or modified strategy preset")
 	}
@@ -235,14 +247,15 @@ func (o Order) Terminal() bool {
 }
 
 type Snapshot struct {
-	At              time.Time `json:"at"`
-	Account         string    `json:"-"`
-	AvailableCash   Cents     `json:"available_cash_cents"`
-	Shares          []Shares  `json:"shares"`
-	Options         []Option  `json:"options"`
-	Orders          []Order   `json:"orders"`
-	ExternalSymbols []string  `json:"external_symbols,omitempty"`
-	ExternalCapital Cents     `json:"external_capital_cents"`
+	OrderCoveragePolicy string    `json:"order_coverage_policy,omitempty"`
+	At                  time.Time `json:"at"`
+	Account             string    `json:"-"`
+	AvailableCash       Cents     `json:"available_cash_cents"`
+	Shares              []Shares  `json:"shares"`
+	Options             []Option  `json:"options"`
+	Orders              []Order   `json:"orders"`
+	ExternalSymbols     []string  `json:"external_symbols,omitempty"`
+	ExternalCapital     Cents     `json:"external_capital_cents"`
 }
 
 type Quote struct {
@@ -292,10 +305,20 @@ type Intent struct {
 }
 
 type State struct {
-	Version   int                 `json:"version"`
-	Account   string              `json:"account_number,omitempty"`
-	Positions map[string]Position `json:"positions"`
-	Intents   map[string]Intent   `json:"intents"`
+	Version         int                    `json:"version"`
+	Account         string                 `json:"account_number,omitempty"`
+	Positions       map[string]Position    `json:"positions"`
+	Intents         map[string]Intent      `json:"intents"`
+	CompletedOrders map[string]OrderRecord `json:"completed_orders,omitempty"`
+}
+
+// Completed receipts survive expiration and call-away. History from another
+// writer must never be mistaken for this daemon's own terminal order.
+type OrderRecord struct {
+	Ref      string    `json:"ref_id"`
+	Symbol   string    `json:"symbol"`
+	OptionID string    `json:"option_id"`
+	At       time.Time `json:"at"`
 }
 
 func NewState() State {
@@ -305,6 +328,14 @@ func NewState() State {
 func (s State) Validate() error {
 	if s.Version != 1 || s.Positions == nil || s.Intents == nil || len(s.Positions) > 3 || len(s.Intents) > 3 {
 		return errors.New("invalid journal schema or position count")
+	}
+	if len(s.CompletedOrders) > 1024 {
+		return errors.New("completed order ledger requires operator archival; never discard ownership automatically")
+	}
+	for id, r := range s.CompletedOrders {
+		if id == "" || r.Ref == "" || r.Symbol == "" || r.OptionID == "" || r.At.IsZero() {
+			return errors.New("invalid completed order ownership record")
+		}
 	}
 	for symbol, p := range s.Positions {
 		if symbol == "" || len(symbol) > 5 || p.OwnedShares < 0 || (p.OwnedShares != 0 && p.OwnedShares != 100) || p.Cost < 0 || p.Cost > MaxMoney/100 {

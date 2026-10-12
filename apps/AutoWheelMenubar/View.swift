@@ -66,6 +66,8 @@ struct WheelView: View {
                 actionRow("Positions and Readiness", symbol: "list.bullet.rectangle") { model.selectedTab = 3 }
                 actionRow("Activity and Logs", symbol: "text.alignleft") { model.selectedTab = 2 }
             }
+            actionRow("Open Weekly P&L Calendar", symbol: "calendar") { Task { await model.openCalendar() } }
+                .help("View weekly results or load saved historical simulation reports")
             actionRow("Open Strategy Guide", symbol: "book") { model.openGuide() }
             menuDivider()
             actionRow("Quit AutoWheel", symbol: "power") { NSApp.terminate(nil) }
@@ -115,7 +117,10 @@ struct WheelView: View {
             menuDivider()
             row("Target", "Linux msi · Robinhood MCP")
             row("Execution", s.mode == "live" ? "Live" : "Read only · orders disabled")
-            row("Live Readiness", s.live_readiness.map { $0.ready ? "Passed · one-click activation" : "Checking / blocked" } ?? "Checking")
+            row("Live Readiness", s.live_readiness.map { $0.ready ? (s.config.restrictedOrders ? "Passed · restricted standard orders" : "Passed · one-click activation") : "Checking / blocked" } ?? "Checking")
+            if s.config.restrictedOrders {
+                menuNotice("Advanced/OCO visibility unknown. Keep this account exclusive to AutoWheel; no manual or contingent orders.", symbol: "exclamationmark.triangle", color: .yellow)
+            }
             row("Shared Coordinator", s.coordinator.map { $0.healthShort } ?? "Not configured")
             row("Order Window", s.trading_window_open == true ? "Open · freshness checks apply" : "Closed · standby")
             row(s.config.symbol_limit_scope == "managed" ? "Managed Symbols" : "Active Symbols", s.activeSymbols.map { "\($0.count) / \(s.config.max_symbols)" } ?? "— / \(s.config.max_symbols)")
@@ -195,13 +200,19 @@ struct WheelView: View {
                 banner("Live trading enabled", "Every order rechecks fresh quotes, account cash, positions and broker review. Turn off Live Trading to pause.", color: .red)
             }
             if let reason = s.reason, !reason.isEmpty { banner("Daemon reason", reason, color: model.color) }
+            if s.config.restrictedOrders {
+                banner("Restricted standard orders", s.account_info?.coverage_warning ?? "Advanced/OCO visibility is unknown. Keep this account exclusive to AutoWheel; no manual, contingent or other-strategy orders. Observed outside activity blocks execution.", color: .yellow)
+            }
             section("Readiness") {
                 row("Agentic account configured", s.account_configured ? "Yes" : "Required")
                 row("Private OAuth token file", s.token_present ? "Present" : "Missing")
                 if let info = s.account_info {
                     row("Agentic account", "••••\(info.account_last4)")
                     row("Authenticated broker read", age(info.at))
-                    row("Complete account snapshot", info.snapshot_complete ? "Yes" : "Blocked · partial display facts")
+                    row("Complete account snapshot", info.snapshot_complete ? "Yes" : (s.config.restrictedOrders ? "No · advanced/OCO unknown" : "Blocked · partial display facts"))
+                    if s.config.restrictedOrders {
+                        row("Standard execution facts", info.execution_snapshot_usable == true ? "Available · restricted policy" : "Blocked")
+                    }
                 }
                 row("Live capability", s.live_capable == true ? "Installed" : "Disabled")
                 row("Symbol limit scope", s.config.symbol_limit_scope == "managed" ? "AutoWheel only · external symbols quarantined" : "Whole account")

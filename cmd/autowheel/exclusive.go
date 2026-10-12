@@ -129,6 +129,9 @@ func verifyNativeSeal(raw []byte, c wheel.Config) (int64, string, error) {
 	if seal.Schema != "PilotStateHandoffV1" || seal.StateDir != c.TradePulseStateDir || seal.DatabasePath != filepath.Join(c.TradePulseStateDir, "pilot.sqlite3") || seal.DatabaseSize <= 0 || !sha256Hex(seal.DatabaseHash) || !sha256Hex(seal.Anchor) || !sha256Hex(seal.Hash) || seal.SealedAt.IsZero() || seal.SealedAt.After(time.Now().Add(2*time.Second)) || seal.Local.Account != digestBytes([]byte(c.Account)) {
 		return 0, "", errors.New("native retirement account/database binding is invalid")
 	}
+	if c.OrderCoveragePolicy == "exclusive_standard" && !c.ExclusiveOrdersSince.Equal(seal.SealedAt) {
+		return 0, "", errors.New("exclusive activity cutoff differs from verified native retirement")
+	}
 	values["handoff_hash"] = json.RawMessage(`""`)
 	var canonical bytes.Buffer
 	canonical.WriteByte('{')

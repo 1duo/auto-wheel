@@ -357,7 +357,7 @@ func run() error {
 			return nil
 		}
 		lastBroker = new(snapshot)
-		if err = wheel.Reconcile(&st, snapshot, time.Now()); err != nil {
+		if err = wheel.ReconcileForConfig(c, &st, snapshot, time.Now()); err != nil {
 			s.Stage = "blocked"
 			readiness = &liveReadiness{At: time.Now(), Reason: err.Error()}
 			s.Reason = err.Error()
@@ -434,7 +434,7 @@ func run() error {
 		lastBroker = new(snapshot)
 		// Chain scans can outlive a fill or manual trade. Reconcile this newer
 		// snapshot before publishing a plan or retaining readiness for activation.
-		if err = wheel.Reconcile(&st, snapshot, time.Now()); err != nil {
+		if err = wheel.ReconcileForConfig(c, &st, snapshot, time.Now()); err != nil {
 			s.Stage = "blocked"
 			readiness = &liveReadiness{At: time.Now(), Reason: err.Error()}
 			s.Reason = err.Error()

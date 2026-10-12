@@ -10,6 +10,8 @@
 /.playwright-cli/
 /review-private/
 /publication/
+/output/
+/docs/deployment*.json
 /apps/AutoWheelMenubar/.build/
 .env
 .env.*

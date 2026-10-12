@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"autowheel/internal/calendarui"
 	aruntime "autowheel/internal/runtime"
 	"autowheel/internal/wheel"
 )
@@ -49,6 +50,7 @@ func operatorAPI(read func() status, mode, dir string, wake chan<- struct{}, fea
 		return s
 	}
 	mux := http.NewServeMux()
+	calendarui.Register(mux)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintln(w, `{"alive":true}`)

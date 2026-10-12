@@ -126,6 +126,15 @@ final class WheelModel: ObservableObject {
             }
         } catch { notice = "msi command outcome unconfirmed: \(error.localizedDescription)" }
     }
+    func openCalendar() async {
+        if let url = Bundle.main.url(forResource: "calendar", withExtension: "html") {
+            NSWorkspace.shared.open(url)
+        } else if await api.calendarAvailable() {
+            NSWorkspace.shared.open(api.calendarURL)
+        } else {
+            notice = "Calendar unavailable. Reinstall the menubar app to include its offline calendar."
+        }
+    }
     func openGuide() {
         let path = Bundle.main.path(forResource: "guide", ofType: "html")
         if let path { NSWorkspace.shared.open(URL(fileURLWithPath: path)) }

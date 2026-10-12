@@ -5,7 +5,7 @@ Readiness is evidence for the installed integration, not an order approval. The 
 Required conditions:
 
 - An explicit active Agentic cash account with Level 2+ options; no leverage, unproven balances, pending settlement, or unknown cash obligations.
-- Complete account-scoped holdings and order history, linked crypto coverage when applicable, trade-approval coverage, and advanced/OCO order coverage. Missing provider tools block execution.
+- Account-scoped holdings and fully paginated standard order history, linked crypto coverage when applicable, and trade-approval coverage. The default full-coverage policy also requires advanced/OCO order coverage.
 - Exact standard equity deliverables (100 shares), supported contracts and quantities, fresh usable quotes, and exact fee/collateral review.
 - No unresolved submission, unknown option exposure, conflicting equity activity, or appropriated external inventory.
 - Verified separate-account isolation, qualified exclusive peer retirement, or a qualified single execution coordinator. Observation alone grants no execution capability.
@@ -16,3 +16,7 @@ The activation record binds the executable SHA-256 and configuration as well as 
 The daemon permits at most three managed symbols, one contract each. Filled puts retain expiry and strike across restart; inventory is adopted only after settled broker facts and ownership evidence. Absence alone cannot prove expiration before the contract expiry day ends.
 
 Historical simulation proofs qualify their modeled assumptions only. They do not prove broker acceptance, complete provider tool coverage, or live release readiness.
+
+An explicit `order_coverage_policy: "exclusive_standard"` uses the existing MCP readers without an advanced-order reader. It requires native exclusive retirement, with `exclusive_orders_since` exactly equal to the verified seal's `sealed_at`; moving the cutoff forward is rejected. Only AutoWheel's durable single-leg, one-contract sell-to-open receipts may appear in option history. All equity orders must be terminal with creation and last-transaction timestamps before that cutoff. Outside stock, unsupported portfolio categories, pending approvals and ambiguous facts block execution. A fresh account read after review must still admit the proposed order.
+
+This is restricted readiness, not complete account visibility. `snapshot_complete` remains false, `execution_snapshot_usable` reports supported fact collection, and the native menu displays the coverage warning. Crypto order creation and update timestamps must also precede native retirement. The account must stay exclusive to AutoWheel: no manual, contingent or other-strategy orders. An unseen dormant advanced order cannot be disproved by this policy; observed interference blocks subsequent execution. Broker review is not a reservation or an atomic account-wide transaction.

@@ -25,6 +25,8 @@ cat > "$task_build/Contents/Info.plist" <<'PLIST'
 </dict></plist>
 PLIST
 cp "$task_root/docs/strategy.html" "$task_build/Contents/Resources/guide.html"
+cp "$task_root/internal/calendarui/calendar.html" "$task_root/internal/calendarui/calendar.js" "$task_build/Contents/Resources/"
+node "$task_root/scripts/attach-calendar-history.cjs" "$task_build/Contents/Resources/calendar.html"
 codesign --force --sign - "$task_build"
 task_uid=$(id -u)
 for task_label in com.autowheel.menubar com.autowheel.msi-tunnel; do

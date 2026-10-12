@@ -17,12 +17,14 @@ import (
 )
 
 type liveReadiness struct {
-	At              time.Time         `json:"at"`
-	Ready           bool              `json:"ready"`
-	Reason          string            `json:"reason,omitempty"`
-	VerifiedSymbols []string          `json:"verified_symbols,omitempty"`
-	Unavailable     map[string]string `json:"unavailable_symbols,omitempty"`
-	Preview         *wheel.Candidate  `json:"preview,omitempty"`
+	At                  time.Time         `json:"at"`
+	Ready               bool              `json:"ready"`
+	Reason              string            `json:"reason,omitempty"`
+	VerifiedSymbols     []string          `json:"verified_symbols,omitempty"`
+	Unavailable         map[string]string `json:"unavailable_symbols,omitempty"`
+	Preview             *wheel.Candidate  `json:"preview,omitempty"`
+	OrderCoveragePolicy string            `json:"order_coverage_policy,omitempty"`
+	CoverageWarning     string            `json:"coverage_warning,omitempty"`
 }
 
 type activationControl struct {
@@ -42,6 +44,9 @@ type activationRecord struct {
 
 func activationReady(s status) bool {
 	if !wheel.CalendarKnown(time.Now()) || !s.LiveCapable || s.LiveReadiness == nil || !s.LiveReadiness.Ready || s.Broker == nil || len(s.Intents) > 0 {
+		return false
+	}
+	if s.Config.OrderCoveragePolicy == "exclusive_standard" && (s.LiveReadiness.OrderCoveragePolicy != "exclusive_standard" || s.Broker.OrderCoveragePolicy != "exclusive_standard" || s.LiveReadiness.CoverageWarning != wheel.StandardOrderWarning) {
 		return false
 	}
 	checkAge, snapshotAge := time.Since(s.LiveReadiness.At), time.Since(s.Broker.At)
@@ -125,7 +130,7 @@ func removeControl(dir, name string) error {
 // Compatibility reviews cannot authorize a later snapshot without reconciling
 // it and persisting any newly confirmed fills or inventory transitions.
 func recheckReadiness(c wheel.Config, st *wheel.State, store wheel.Store, s wheel.Snapshot, checked liveReadiness, now time.Time) (liveReadiness, error) {
-	if err := wheel.Reconcile(st, s, now); err != nil {
+	if err := wheel.ReconcileForConfig(c, st, s, now); err != nil {
 		return liveReadiness{At: now, Reason: err.Error()}, nil
 	}
 	if err := store.Save(*st); err != nil {
@@ -142,6 +147,10 @@ func recheckReadiness(c wheel.Config, st *wheel.State, store wheel.Store, s whee
 // and exact collateral are checked again before every real order.
 func preflight(ctx context.Context, c wheel.Config, st wheel.State, b *robinhood.Broker, s wheel.Snapshot, retired ...*retiredPeer) liveReadiness {
 	r := liveReadiness{At: time.Now(), Unavailable: map[string]string{}}
+	r.OrderCoveragePolicy = c.OrderCoveragePolicy
+	if c.OrderCoveragePolicy == "exclusive_standard" {
+		r.CoverageWarning = wheel.StandardOrderWarning
+	}
 	if !wheel.CalendarKnown(r.At) {
 		r.Reason = "date is outside the reviewed exchange calendar; live trading blocked"
 		return r

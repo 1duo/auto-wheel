@@ -30,6 +30,9 @@ struct WheelConfig: Decodable {
     let max_dte_days: Int
     let poll_seconds: Int
     let selection_mode: String?
+	let order_coverage_policy: String?
+
+	var restrictedOrders: Bool { order_coverage_policy == "exclusive_standard" }
 
     // Omitted/empty legacy config means balanced. Unknown raw values stay nil
     // so the selector disables instead of mislabeling.
@@ -113,6 +116,8 @@ struct AccountInfo: Decodable {
     let available_cash_cents: Int64
     let holdings: [AccountHolding]?
     let snapshot_complete: Bool
+	let execution_snapshot_usable: Bool?
+	let coverage_warning: String?
 }
 
 struct LiveReadiness: Decodable {
