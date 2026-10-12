@@ -10,6 +10,9 @@ import (
 )
 
 func diagnosticExpiry(date time.Time) bool {
+	// Expiries are civil date labels; UTC midnight must not become yesterday ET.
+	year, month, day := date.Date()
+	date = time.Date(year, month, day, 12, 0, 0, 0, wheel.Eastern)
 	if _, open := wheel.SessionClose(date); !open {
 		return false
 	}

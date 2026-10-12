@@ -85,6 +85,26 @@ func TestYearHolidayExpirations(t *testing.T) {
 	}
 }
 
+func TestDiagnosticExpiryPreservesCivilDate(t *testing.T) {
+	for _, tc := range []struct {
+		date string
+		want bool
+	}{
+		{"2024-03-28", true}, {"2024-03-29", false},
+		{"2025-07-03", true}, {"2025-07-04", false},
+		{"2026-04-02", true}, {"2026-04-03", false},
+		{"2026-06-18", true}, {"2026-07-02", true},
+		{"2026-04-01", false}, {"2026-04-04", false},
+	} {
+		for _, location := range []*time.Location{time.UTC, wheel.Eastern} {
+			date, err := time.ParseInLocation("2006-01-02", tc.date, location)
+			if err != nil || diagnosticExpiry(date) != tc.want {
+				t.Fatalf("civil expiry %s in %s: want %v, error %v", tc.date, location, tc.want, err)
+			}
+		}
+	}
+}
+
 func TestYearCapitalAndPrePremiumFunding(t *testing.T) {
 	q := quote{Kind: "put", Strike: 80000}
 	if yearOrderFunded(q, initialCash, 100) {
