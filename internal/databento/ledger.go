@@ -40,7 +40,9 @@ const maxInt64Headroom = int64(1<<63 - 1)
 
 // Keep the durable file within the reader's bound. Each pending entry needs
 // at most 128 extra encoded bytes for its eventual hash/positive int64 count.
-const maxLedgerFileBytes = 1 << 20
+// Two MiB accommodates the existing acquisition history plus the frozen
+// multiyear scopes without deleting reservations or changing authorization.
+const maxLedgerFileBytes = 2 << 20
 
 // allowedBillableEndpoints lists endpoints that may consume the ledger.
 // Range is the streaming endpoint; batch.submit_job is the bulk endpoint
