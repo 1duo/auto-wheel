@@ -168,6 +168,27 @@ func TestAnalyticalCallIdentityDoesNotBypassExerciseOrCash(t *testing.T) {
 	}
 }
 
+// QuantLib 1.40 American Douglas FD, independently refined from 1024/2400
+// to 2048/4800, supplies these invented five-day, empty-cash references.
+// Reference refinement changed price by <.000013 and delta by <.0000003.
+func TestOffStrikePutMatchesIndependentReference(t *testing.T) {
+	cases := []struct{ spot, price, delta float64 }{
+		{100.05, 6.938250033478666, -.4626236906976922},
+		{99.95, 6.984625631621691, -.46488884673135444},
+	}
+	for _, c := range cases {
+		in := validInput()
+		in.Kind, in.SpotUSD, in.Sigma = Put, c.spot, 1.5
+		got, err := Price(in, Grid{TimeSteps: 512, SpaceSteps: 1200})
+		if err != nil {
+			t.Fatalf("spot=%v: %v", c.spot, err)
+		}
+		if math.Abs(got.PriceUSD-c.price) > .001 || math.Abs(got.Delta-c.delta) > .001 {
+			t.Fatalf("spot=%v: got=%+v want price=%v delta=%v", c.spot, got, c.price, c.delta)
+		}
+	}
+}
+
 func TestExactSubsecondEventPreserved(t *testing.T) {
 	now := time.Date(2026, time.April, 6, 13, 35, 0, 123456789, time.UTC)
 	expiry := now.Add(2 * 24 * time.Hour).Add(987654321 * time.Nanosecond)

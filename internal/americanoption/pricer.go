@@ -8,7 +8,7 @@
 // is valid SYNTHETIC numeric input (explicit zero synthetic cash), with no
 // causal or real-world zero-dividend claim.
 //
-// Method: log-spot uniform grid containing spot and strike, Black-Scholes
+// Method: log-spot grid resolving and containing spot and strike, Black-Scholes
 // log generator (central when off-diagonals are nonnegative, otherwise
 // upwind drift), Crank-Nicolson with implicit-Euler (Rannacher) damping
 // around terminal payoff and each dividend jump, American obstacle
@@ -36,7 +36,7 @@ import (
 
 // ModelID identifies this offline research American FD engine.
 // It is distinct from the European continuous-q model.
-const ModelID = "American-cashDiv-q0-analyticCall-FD-v2"
+const ModelID = "American-cashDiv-q0-analyticCall-focusedFD-v4"
 
 // Kind is the option exercise kind (American).
 type Kind string
@@ -365,7 +365,6 @@ func buildSpaceGrid(s0, k, sig, T, rate, totalCash float64, N int, call bool) (x
 	if !finite(lo) || !finite(hi) || !(hi > lo) || (logS == logK && s0 != k) {
 		return nil, nil, 0, 0, nil, fmt.Errorf("unrepresentable log-space domain: %w", ErrNonConverged)
 	}
-	L := math.Abs(logS - logK)
 	x = make([]float64, N+1)
 	if s0 == k {
 		i0 := N / 2
@@ -394,92 +393,69 @@ func buildSpaceGrid(s0, k, sig, T, rate, totalCash float64, N int, call bool) (x
 		iSpot = i0
 		iStrike = i0
 	} else {
-		dxTarget := (hi - lo) / float64(N)
-		kk := int(math.Round(L / dxTarget))
-		kk = max(1, kk)
-		kk = min(kk, N-1)
-		placed := false
-		for ; kk >= 1; kk-- {
-			dx := L / float64(kk)
-			mn := min(logS, logK)
-			mx := max(logS, logK)
-			// Check float counts before converting them to indices. Extreme
-			// finite inputs can produce counts outside the integer range.
-			lowCount := math.Ceil((mn - lo) / dx)
-			highCount := math.Ceil((hi - mx) / dx)
-			if !finite(lowCount) || !finite(highCount) || lowCount < 1 || highCount < 1 || lowCount > float64(N-kk) || highCount > float64(N-kk) {
-				continue
-			}
-			wLow, wHigh := int(lowCount), int(highCount)
-			if kk+wLow+wHigh <= N {
-				xLow := mn - float64(wLow)*dx
-				for i := range x {
-					x[i] = xLow + float64(i)*dx
+		// Uniform spacing across the fixed guard can miss the diffusion or
+		// exercise-contact layer even when both anchors are exact nodes.
+		// Equidistribute a monotone coordinate focused on BOTH anchors.
+		// This changes resolution only, not the obstacle or exercise policy.
+		scale := sig * math.Sqrt(T)
+		if (!call && rate > 0) || (call && rate < 0) {
+			scale = min(scale, sig*sig/(2*math.Abs(rate)))
+		}
+		coordinate := func(v float64) float64 {
+			return math.Asinh((v-logS)/scale) + math.Asinh((v-logK)/scale) + (v-lo)/W
+		}
+		inverse := func(target, lower, upper float64) float64 {
+			for range 64 {
+				mid := lower + (upper-lower)/2
+				if mid == lower || mid == upper {
+					break
 				}
-				// Snap both to exact logs (1-ulp non-uniformity at most).
-				var iMn, iMx int
-				iMn = wLow
-				iMx = wLow + kk
-				x[iMn] = mn
-				x[iMx] = mx
-				if logS < logK {
-					iSpot, iStrike = iMn, iMx
+				if coordinate(mid) < target {
+					lower = mid
 				} else {
-					iSpot, iStrike = iMx, iMn
+					upper = mid
 				}
-				placed = true
-				break
+			}
+			return lower + (upper-lower)/2
+		}
+		// Allocate intervals between exact anchors before generating nodes.
+		// Inserting an anchor into a global quantile grid can accidentally
+		// create a near-zero cell and make the obstacle solve ill-conditioned.
+		bounds := []float64{lo, min(logS, logK), max(logS, logK), hi}
+		coords := make([]float64, len(bounds))
+		for i, v := range bounds {
+			coords[i] = coordinate(v)
+			if !finite(coords[i]) || (i > 0 && coords[i] <= coords[i-1]) {
+				return nil, nil, 0, 0, nil, fmt.Errorf("focused coordinates cannot be represented: %w", ErrNonConverged)
 			}
 		}
-		if !placed {
-			// Tiny-L fallback: uniform N-1 intervals aligned to spot, then
-			// insert strike. Exactly N intervals, one non-uniform kink.
-			n0 := N - 1
-			dxU := (hi - lo) / float64(n0)
-			iS := n0 / 2
-			xLow := logS - float64(iS)*dxU
-			base := make([]float64, n0+1)
-			for i := range base {
-				base[i] = xLow + float64(i)*dxU
-			}
-			base[iS] = logS
-			pos, found := slices.BinarySearch(base, logK)
-			x = make([]float64, N+1)
-			switch {
-			case pos <= 0:
-				x[0] = logK
-				copy(x[1:], base[:N])
-				iStrike = 0
-				iSpot = iS + 1
-			case pos >= len(base):
-				copy(x[:N], base[:N])
-				x[N] = logK
-				iStrike = N
-				// spot shifts only if insertion before it; here after, unchanged.
-				iSpot = iS
-			default:
-				if found {
-					// Already exactly on a node; extend to N intervals.
-					copy(x[:n0+1], base)
-					// Extend upper by one dxU to reach N intervals.
-					x[N] = base[n0] + dxU
-					iSpot = iS
-					iStrike = pos
-				} else {
-					copy(x[:pos], base[:pos])
-					x[pos] = logK
-					copy(x[pos+1:], base[pos:N])
-					iStrike = pos
-					if pos <= iS {
-						iSpot = iS + 1
-					} else {
-						iSpot = iS
-					}
-				}
-			}
-			x[iSpot] = logS
-			x[iStrike] = logK
+		counts := []int{1, 1, 1}
+		fractions := make([]float64, 3)
+		remaining := N - 3
+		for i := range counts {
+			ideal := float64(N-3) * (coords[i+1] - coords[i]) / (coords[3] - coords[0])
+			extra := int(math.Floor(ideal))
+			counts[i] += extra
+			remaining -= extra
+			fractions[i] = ideal - float64(extra)
 		}
+		order := []int{0, 1, 2}
+		slices.SortFunc(order, func(a, b int) int {
+			return cmp.Or(cmp.Compare(fractions[b], fractions[a]), cmp.Compare(a, b))
+		})
+		for i := range remaining {
+			counts[order[i%len(order)]]++
+		}
+		x = make([]float64, 0, N+1)
+		x = append(x, lo)
+		for j, count := range counts {
+			for i := 1; i < count; i++ {
+				x = append(x, inverse(coords[j]+(coords[j+1]-coords[j])*float64(i)/float64(count), bounds[j], bounds[j+1]))
+			}
+			x = append(x, bounds[j+1])
+		}
+		iSpot, _ = slices.BinarySearch(x, logS)
+		iStrike, _ = slices.BinarySearch(x, logK)
 	}
 	S = make([]float64, N+1)
 	for i, xv := range x {

@@ -55,6 +55,8 @@ The American model uses an analytical call identity only for q=0, an explicitly
 empty cash schedule and nonnegative rates. These restrictions are justified by
 [Healy's no-early-exercise condition](https://arxiv.org/abs/2109.15157).
 Puts, negative-rate calls and cash-dividend calls retain the obstacle solver.
+The spatial grid resolves spot and strike, allocating intervals between exact
+anchors before generating nodes to avoid accidental near-zero cells.
 An empty model schedule does not establish historical dividend absence.
 Independent reference and interpolation checks remain necessary: dual-grid
 agreement alone is not a global error bound or a source-qualification gate.
