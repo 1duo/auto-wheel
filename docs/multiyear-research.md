@@ -82,6 +82,21 @@ premium dollar multiplier and deliverable of each resulting contract remain
 invalidate accounting. The current held-action stop stays in place until the
 native instrument transition and the resulting position limits are supported.
 
+Dividend evidence must distinguish the ex-date, board declaration date and
+public announcement. Match an independently sourced ex-date to the issuer's
+exact amount, record date and payment date. A board declaration can precede
+the announcement; it cannot establish when a strategy learned the information.
+Retain original sources and exact decimals, including fractional-cent per-share
+amounts, and credit only the reconciled entitlement.
+
+SEC acceptance timestamps also do not prove first public availability. The
+[SEC documents an unpredictable publication lag and no first-availability timestamp](https://www.sec.gov/files/about/webmaster-faq.htm).
+Preserve the original submission-header time and the submissions API value
+separately, with the historical Eastern-time conversion. A conflicting clock
+must stay unresolved for decision-time admission. Downloading all enumerated
+filings proves capture scope; it does not by itself prove corporate-action
+coverage, dividend absence or a causal publication schedule.
+
 Outputs include cash, stock and short-option liability ledgers, total return,
 drawdown, cash utilization and each month's closing cash and equity. Missing
 marks remain null. The endpoint simulator leaves historical performance and
