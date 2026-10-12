@@ -28,11 +28,13 @@ func run() error {
 	root := flag.String("strategy-root", ".", "AutoWheel source checkout for provenance")
 	blocker := flag.String("blocker", "", "additional evidenced data-access blocker; suppresses performance")
 	fixture := flag.Bool("fixture", false, "run clearly labeled synthetic accounting fixture, never historical performance")
+	frozen := flag.String("frozen-selection", "", "frozen 2024 development selection to bind into a 2025 multiyear input")
 	flag.Parse()
-	if *output == "" || (*fixture && *input != "") || (!*fixture && *input == "") || flag.NArg() != 0 {
+	if *output == "" || (*fixture && (*input != "" || *frozen != "")) || (!*fixture && *input == "") || flag.NArg() != 0 {
 		return errors.New("use --input FILE or --fixture, plus --output NEW_FILE")
 	}
 	var source io.Reader
+	originalInputHash := sha256.New()
 	if *fixture {
 		source = simulation.AccountingFixture()
 	} else {
@@ -42,6 +44,12 @@ func run() error {
 		}
 		defer f.Close()
 		source = f
+		if *frozen != "" {
+			source, err = bindFrozenInput(io.TeeReader(source, originalInputHash), *frozen)
+			if err != nil {
+				return err
+			}
+		}
 	}
 	hash := sha256.New()
 	for _, name := range []string{"types.go", "strategy.go", "presets.go", "engine.go", "calendar.go"} {
@@ -53,9 +61,12 @@ func run() error {
 		hash.Write(content)
 	}
 	report := simulation.Replay(source)
+	if *frozen != "" {
+		report.OriginalInputSHA256 = hex.EncodeToString(originalInputHash.Sum(nil))
+	}
 	report.StrategySHA256 = hex.EncodeToString(hash.Sum(nil))
 	hash.Reset()
-	for _, path := range []string{"internal/simulation/types.go", "internal/simulation/replay.go", "internal/simulation/multiyear.go", "internal/simulation/selection_omission.go", "internal/simulation/fixture.go", "cmd/autowheel-sim/main.go"} {
+	for _, path := range []string{"internal/simulation/types.go", "internal/simulation/replay.go", "internal/simulation/multiyear.go", "internal/researchselection/selection.go", "internal/simulation/selection_omission.go", "internal/simulation/fixture.go", "cmd/autowheel-sim/main.go", "cmd/autowheel-sim/frozen_input.go"} {
 		content, err := os.ReadFile(filepath.Join(*root, path))
 		if err != nil {
 			return err

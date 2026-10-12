@@ -2,9 +2,12 @@ package simulation
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"testing"
 
+	"autowheel/internal/researchselection"
 	"autowheel/internal/wheel"
 )
 
@@ -20,8 +23,85 @@ func multiyearSpec(t *testing.T, preset string, fee wheel.Cents, year int) Spec 
 		CorporateActionsAudited: true, Config: c}
 	if year == 2025 {
 		s.Start, s.End = "2025-01-02", "2025-12-31"
+		s.FrozenDevelopment = syntheticDevelopment(t, preset)
 	}
 	return s
+}
+
+// These invented paths test selection binding only; they never supply market
+// observations, source qualification, or historical performance.
+func syntheticDevelopment(t *testing.T, winner string) *researchselection.Evidence {
+	t.Helper()
+	seed := int64(8_500_000)
+	var results []researchselection.Result
+	for _, id := range wheel.StrategyPresetNames() {
+		for _, cost := range [][2]int64{{6, 0}, {200, 1}} {
+			pnl := int64(10000)
+			if id == winner {
+				pnl = 40000
+			}
+			r := researchselection.Result{Strategy: id, Fee: cost[0], Allowance: cost[1], Seed: seed, PnL: new(pnl), CashReconciled: true, PnLReconciled: true}
+			for _, date := range researchselection.Sessions() {
+				r.Daily = append(r.Daily, researchselection.Point{Date: date, Cash: seed + pnl, Available: seed + pnl, Equity: new(seed + pnl)})
+			}
+			for range 12 {
+				r.Trades = append(r.Trades, researchselection.Trade{Event: "modeled_sell_put"})
+			}
+			results = append(results, r)
+		}
+	}
+	report, err := json.Marshal(map[string]any{"schema": "AutoWheelCalendarYearPortfolioDiagnosticV1", "year": 2024, "start": "2024-07-01", "end": "2024-12-31", "starting_cash_cents": seed,
+		"max_collateral_cents": 15_000_000, "max_managed_symbols": 3, "max_contracts_per_symbol": 1, "symbols": wheel.DefaultConfig().Symbols, "results": results, "historical_performance_qualified": false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(report)
+	selection, err := json.Marshal(map[string]any{"schema": "AutoWheelFrozenMultiyearSelectionV1", "protocol": researchselection.Protocol, "development_year": 2024, "held_out_year": 2025,
+		"development_start": "2024-07-01", "development_end": "2024-12-31", "held_out_start": "2025-01-02", "held_out_end": "2025-12-31", "baseline": researchselection.Baseline, "candidate": winner,
+		"development_report_sha256": hex.EncodeToString(digest[:]), "frozen_at": "2026-10-12T04:00:00Z"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &researchselection.Evidence{Selection: selection, Report: report}
+}
+
+func TestMultiyearContinuousHeldoutRejectsUnfrozenAndEditedPolicies(t *testing.T) {
+	for name, change := range map[string]func(*Spec){
+		"missing_freeze": func(s *Spec) { s.FrozenDevelopment = nil },
+		"unselected_preset": func(s *Spec) {
+			s.Config, _ = s.Config.WithStrategyPreset("balanced-roi-v1")
+		},
+		"changed_seed":   func(s *Spec) { s.InitialCash++ },
+		"changed_report": func(s *Spec) { s.FrozenDevelopment.Report[0] ^= 1 },
+		"edited_winner": func(s *Spec) {
+			var metadata map[string]any
+			if err := json.Unmarshal(s.FrozenDevelopment.Selection, &metadata); err != nil {
+				t.Fatal(err)
+			}
+			metadata["candidate"] = "balanced-roi-v1"
+			s.FrozenDevelopment.Selection, _ = json.Marshal(metadata)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := multiyearSpec(t, "liquid-roi-v1", 6, 2025)
+			change(&s)
+			r := replay{report: Report{Spec: s}}
+			if err := r.init(); err == nil {
+				t.Fatal("held-out evaluation accepted unbound or changed development evidence")
+			}
+		})
+	}
+	s := multiyearSpec(t, "liquid-roi-v1", 6, 2025)
+	s.Config, _ = s.Config.WithStrategyPreset(researchselection.Baseline)
+	r := replay{report: Report{Spec: s}}
+	if err := r.init(); err != nil {
+		t.Fatal("baseline comparison was rejected", err)
+	}
+	s.Start, s.End = "2024-07-01", "2024-12-31"
+	r = replay{report: Report{Spec: s}}
+	if err := r.init(); err == nil {
+		t.Fatal("development consumed held-out selection evidence")
+	}
 }
 
 func TestMultiyearContinuousScopeRequiresActualCoverage(t *testing.T) {

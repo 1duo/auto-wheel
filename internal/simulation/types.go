@@ -6,21 +6,23 @@ package simulation
 import (
 	"time"
 
+	"autowheel/internal/researchselection"
 	"autowheel/internal/wheel"
 )
 
 type Spec struct {
-	Schema                  string       `json:"schema_version"`
-	Mode                    string       `json:"mode"`                       // fixture or historical_quote_replay
-	ResearchVariant         string       `json:"research_variant,omitempty"` // Empty preserves the frozen baseline.
-	Start                   string       `json:"start_date"`
-	End                     string       `json:"end_date"`
-	InitialCash             wheel.Cents  `json:"initial_cash_cents"`
-	PeerReserve             wheel.Cents  `json:"peer_reserved_cash_cents"`
-	PeerSymbols             []string     `json:"peer_reserved_symbols,omitempty"`
-	Source                  string       `json:"source"`
-	CorporateActionsAudited bool         `json:"corporate_actions_audited"`
-	Config                  wheel.Config `json:"strategy_config"`
+	Schema                  string                      `json:"schema_version"`
+	Mode                    string                      `json:"mode"`                       // fixture or historical_quote_replay
+	ResearchVariant         string                      `json:"research_variant,omitempty"` // Empty preserves the frozen baseline.
+	Start                   string                      `json:"start_date"`
+	End                     string                      `json:"end_date"`
+	InitialCash             wheel.Cents                 `json:"initial_cash_cents"`
+	PeerReserve             wheel.Cents                 `json:"peer_reserved_cash_cents"`
+	PeerSymbols             []string                    `json:"peer_reserved_symbols,omitempty"`
+	Source                  string                      `json:"source"`
+	CorporateActionsAudited bool                        `json:"corporate_actions_audited"`
+	Config                  wheel.Config                `json:"strategy_config"`
+	FrozenDevelopment       *researchselection.Evidence `json:"frozen_development,omitempty"`
 }
 
 // ResearchPutRiskCap is an offline study, never a production configuration.
@@ -181,21 +183,22 @@ type Metrics struct {
 }
 
 type Report struct {
-	Schema             string       `json:"schema_version"`
-	Status             string       `json:"status"` // blocked, fixture, counterfactual
-	Spec               Spec         `json:"spec"`
-	InputSHA256        string       `json:"input_sha256,omitempty"`
-	StrategySHA256     string       `json:"strategy_sha256,omitempty"`
-	EngineSHA256       string       `json:"simulation_engine_sha256,omitempty"`
-	ExecutableSHA256   string       `json:"executable_sha256,omitempty"`
-	Blockers           []string     `json:"blockers,omitempty"`
-	Assumptions        []string     `json:"assumptions"`
-	ExpectedDecisions  int          `json:"expected_decisions"`
-	ObservedDecisions  int          `json:"observed_decisions"`
-	ExpectedValuations int          `json:"expected_valuations"`
-	ObservedValuations int          `json:"observed_valuations"`
-	Performance        *Metrics     `json:"performance,omitempty"`
-	Equity             []Point      `json:"equity_curve,omitempty"`
-	Trades             []Trade      `json:"trades,omitempty"`
-	EndState           *wheel.State `json:"end_state,omitempty"`
+	Schema              string       `json:"schema_version"`
+	Status              string       `json:"status"` // blocked, fixture, counterfactual
+	Spec                Spec         `json:"spec"`
+	InputSHA256         string       `json:"input_sha256,omitempty"`
+	OriginalInputSHA256 string       `json:"original_input_sha256,omitempty"`
+	StrategySHA256      string       `json:"strategy_sha256,omitempty"`
+	EngineSHA256        string       `json:"simulation_engine_sha256,omitempty"`
+	ExecutableSHA256    string       `json:"executable_sha256,omitempty"`
+	Blockers            []string     `json:"blockers,omitempty"`
+	Assumptions         []string     `json:"assumptions"`
+	ExpectedDecisions   int          `json:"expected_decisions"`
+	ObservedDecisions   int          `json:"observed_decisions"`
+	ExpectedValuations  int          `json:"expected_valuations"`
+	ObservedValuations  int          `json:"observed_valuations"`
+	Performance         *Metrics     `json:"performance,omitempty"`
+	Equity              []Point      `json:"equity_curve,omitempty"`
+	Trades              []Trade      `json:"trades,omitempty"`
+	EndState            *wheel.State `json:"end_state,omitempty"`
 }

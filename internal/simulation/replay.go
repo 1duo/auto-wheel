@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"autowheel/internal/researchselection"
 	"autowheel/internal/wheel"
 )
 
@@ -155,6 +156,9 @@ func decode(data []byte, target any) error {
 
 func (r *replay) init() error {
 	s := r.report.Spec
+	if s.FrozenDevelopment != nil && s.ResearchVariant != ResearchMultiyearROI {
+		return errors.New("frozen development evidence belongs only to the multiyear research variant")
+	}
 	if s.Schema != "AutoWheelReplaySpecV1" || (s.Mode != "fixture" && s.Mode != "historical_quote_replay") || s.Source == "" {
 		return errors.New("invalid spec version, mode or source")
 	}
@@ -199,6 +203,20 @@ func (r *replay) init() error {
 	case ResearchMultiyearROI:
 		if s.Config.StrategyPreset == "" || s.Config.MaxCollateral != 15_000_000 || s.PeerReserve != 0 || len(s.PeerSymbols) != 0 {
 			return errors.New("multiyear replay requires a named preset, $150,000 research ceiling and no peer inventory or reservation")
+		}
+		if s.Start == "2025-01-02" {
+			if s.FrozenDevelopment == nil {
+				return errors.New("2025 continuous replay requires frozen 2024 development evidence")
+			}
+			winner, err := researchselection.Validate(*s.FrozenDevelopment, int64(s.InitialCash))
+			if err != nil {
+				return err
+			}
+			if s.Config.StrategyPreset != winner && s.Config.StrategyPreset != researchselection.Baseline {
+				return errors.New("held-out replay admits only the frozen 2024 winner and baseline")
+			}
+		} else if s.FrozenDevelopment != nil {
+			return errors.New("development replay cannot consume a held-out selection")
 		}
 		var err error
 		defaultConfig, err = defaultConfig.WithStrategyPreset(s.Config.StrategyPreset)

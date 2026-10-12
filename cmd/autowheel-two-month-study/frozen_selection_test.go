@@ -38,7 +38,8 @@ func TestMultiyearFrozenWinnerRejectsEditedSelection(t *testing.T) {
 	}
 	dir := t.TempDir()
 	path := filepath.Join(dir, "2024.json")
-	report := map[string]any{"schema": "AutoWheelCalendarYearPortfolioDiagnosticV1", "year": 2024, "starting_cash_cents": 8_500_000, "results": results}
+	report := map[string]any{"schema": "AutoWheelCalendarYearPortfolioDiagnosticV1", "year": 2024, "start": "2024-07-01", "end": "2024-12-31", "starting_cash_cents": 8_500_000,
+		"max_collateral_cents": 15_000_000, "max_managed_symbols": 3, "max_contracts_per_symbol": 1, "symbols": portfolioSymbols, "results": results}
 	if err := writeExclusiveReport(path, report); err != nil {
 		t.Fatal(err)
 	}
@@ -47,6 +48,7 @@ func TestMultiyearFrozenWinnerRejectsEditedSelection(t *testing.T) {
 	digest := hex.EncodeToString(rawDigest[:])
 	selection := map[string]any{"schema": "AutoWheelFrozenMultiyearSelectionV1", "protocol": "2024-h2-stressed-pnl-minus-drawdown-v1",
 		"development_year": 2024, "held_out_year": 2025, "baseline": "conservative-roi-v1", "candidate": winner,
+		"development_start": "2024-07-01", "development_end": "2024-12-31", "held_out_start": "2025-01-02", "held_out_end": "2025-12-31", "frozen_at": "2026-10-12T04:00:00Z",
 		"development_report": path, "development_report_sha256": digest}
 	selectedPath := filepath.Join(dir, "frozen.json")
 	if err := writeExclusiveReport(selectedPath, selection); err != nil {
@@ -79,5 +81,39 @@ func TestMultiyearMonthEndCashAndMissingDrawdown(t *testing.T) {
 	months := r["end_of_month"].([]map[string]any)
 	if r["daily_valuation_complete"] != false || r["max_drawdown_cents"] != nil || len(months) != 2 || months[0]["ending_cash_cents"] != int64(1010) || months[1]["net_pnl_cents"] != int64(70) {
 		t.Fatal("missing mark or month-end cash was misreported", r)
+	}
+}
+
+func TestMultiyearFrozenSourceRejectsScopeDrift(t *testing.T) {
+	for name, change := range map[string]func(map[string]any){
+		"wrong_start":     func(r map[string]any) { r["start"] = "2024-01-01" },
+		"wrong_end":       func(r map[string]any) { r["end"] = "2025-12-31" },
+		"wrong_ceiling":   func(r map[string]any) { r["max_collateral_cents"] = 8_000_000 },
+		"wrong_slots":     func(r map[string]any) { r["max_managed_symbols"] = 4 },
+		"wrong_contracts": func(r map[string]any) { r["max_contracts_per_symbol"] = 2 },
+		"wrong_universe":  func(r map[string]any) { r["symbols"] = []string{"NVDA"} },
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			report := map[string]any{"schema": "AutoWheelCalendarYearPortfolioDiagnosticV1", "year": 2024, "start": "2024-07-01", "end": "2024-12-31", "starting_cash_cents": 8_500_000,
+				"max_collateral_cents": 15_000_000, "max_managed_symbols": 3, "max_contracts_per_symbol": 1, "symbols": portfolioSymbols, "results": developmentFixture()}
+			change(report)
+			path := filepath.Join(dir, "report.json")
+			if err := writeExclusiveReport(path, report); err != nil {
+				t.Fatal(err)
+			}
+			b, _ := os.ReadFile(path)
+			digest := sha256.Sum256(b)
+			selection := map[string]any{"schema": "AutoWheelFrozenMultiyearSelectionV1", "protocol": "2024-h2-stressed-pnl-minus-drawdown-v1", "development_year": 2024, "held_out_year": 2025,
+				"development_start": "2024-07-01", "development_end": "2024-12-31", "held_out_start": "2025-01-02", "held_out_end": "2025-12-31", "baseline": "conservative-roi-v1", "candidate": "cost-protected-roi-v1",
+				"development_report": path, "development_report_sha256": hex.EncodeToString(digest[:]), "frozen_at": "2026-10-12T04:00:00Z"}
+			selected := filepath.Join(dir, "selection.json")
+			if err := writeExclusiveReport(selected, selection); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := validateFrozenSelection(selected, 8_500_000); err == nil {
+				t.Fatal("hash-consistent scope drift was accepted")
+			}
+		})
 	}
 }

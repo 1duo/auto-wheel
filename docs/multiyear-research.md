@@ -85,7 +85,17 @@ It requires the native five-minute decision schedule, complete chains, causal
 OI/Greeks and continuous pending-order observations. Its fee cases are six cents
 and $2; it does not apply the weekly endpoint diagnostic's extra one-cent
 allowance. Treat this as a separate execution model, not the frozen development
-metric. Empty or incomplete input produces no performance. Reports pin the
+metric. Full-2025 input requires the same frozen 2024 winner proof and accepts
+only that winner or the baseline. Bind it with
+`--frozen-selection /private/frozen-selection.json` when invoking
+`go run ./cmd/autowheel-sim --input /private/2025.jsonl --output /private/continuous-2025.json`.
+The CLI embeds the exact selection and development-report bytes before replay;
+the report hashes both the original and effective streams. Direct library
+inputs require that same embedded evidence. Changed evidence, seed, calendar,
+universe, limits or an unselected preset blocks evaluation. Development cannot
+consume the selection. Evidence is bounded to 1 MiB for selection and 16 MiB
+for the report and does not itself qualify prices or accounting declarations.
+Empty or incomplete input produces no performance. Reports pin the
 preset source, engine source and executing binary. The declared source hashes
 still require independent verification against the built executable and data.
 
