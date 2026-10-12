@@ -79,7 +79,7 @@ type endpointResult struct {
 }
 
 func validateEndpointInput(in input) error {
-	if in.Schema != "AutoWheelTwoMonthEndpointInputV1" && in.Schema != "AutoWheelThreeMonthEndpointInputV1" && in.Schema != "AutoWheelYearToDateEndpointInputV1" {
+	if in.Schema != "AutoWheelTwoMonthEndpointInputV1" && in.Schema != "AutoWheelThreeMonthEndpointInputV1" && in.Schema != "AutoWheelYearToDateEndpointInputV1" && in.Schema != "AutoWheelCalendarYearEndpointInputV1" {
 		return errors.New("endpoint input schema required")
 	}
 	base := in

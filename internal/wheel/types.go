@@ -75,6 +75,7 @@ type Config struct {
 	MaxDays            int           `json:"max_dte_days"`
 	PollSeconds        int           `json:"poll_seconds"`
 	SelectionMode      SelectionMode `json:"selection_mode,omitempty"`
+	StrategyPreset     string        `json:"strategy_preset,omitempty"`
 }
 
 func DefaultConfig() Config {
@@ -96,6 +97,7 @@ func (c Config) EffectiveSelectionMode() SelectionMode {
 // WithSelectionMode returns a copy with the named put-selection discipline
 // and its exact put delta bands. All other settings are unchanged.
 func (c Config) WithSelectionMode(mode SelectionMode) (Config, error) {
+	c.StrategyPreset = ""
 	switch mode {
 	case SelectionConservative:
 		c.SelectionMode = SelectionConservative
@@ -113,6 +115,9 @@ func (c Config) WithSelectionMode(mode SelectionMode) (Config, error) {
 }
 
 func (c Config) Validate() error {
+	if !c.validStrategyPreset() {
+		return errors.New("unknown or modified strategy preset")
+	}
 	switch c.SelectionMode {
 	case "", SelectionConservative, SelectionBalanced:
 	default:

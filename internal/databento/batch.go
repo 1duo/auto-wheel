@@ -48,6 +48,7 @@ var allowedBatchStates = []string{"queued", "processing", "done"}
 // BatchQuery is the exact canonical bulk query. Symbol order is significant:
 // any mutation (including reorder) changes the hash and invalidates quotes.
 type BatchQuery struct {
+	Study   string   `json:"study,omitempty"`
 	Dataset string   `json:"dataset"`
 	Schema  string   `json:"schema"`
 	Symbols []string `json:"symbols"`
@@ -58,6 +59,9 @@ type BatchQuery struct {
 
 // Validate rejects anything outside the bulk allowlist before any quote.
 func (q BatchQuery) Validate() error {
+	if q.Study != "" && q.Study != "calendar-2024-2025-v1" {
+		return errors.New("unknown databento research study")
+	}
 	if len(q.Dataset) == 0 || len(q.Dataset) > 64 {
 		return errors.New("databento batch dataset invalid")
 	}
@@ -137,6 +141,19 @@ func (q BatchQuery) Validate() error {
 			}
 		}
 	}
+	if q.Study != "" {
+		for _, s := range q.Symbols {
+			root := s
+			if opra && !isRawOPRA {
+				root, _ = strings.CutSuffix(s, ".OPT")
+			} else if isRawOPRA {
+				root = strings.TrimSpace(s[:6])
+			}
+			if !slices.Contains([]string{"NVDA", "IREN", "NOW", "AMD", "AMZN", "GOOGL", "META", "MSFT", "PLTR", "AVGO"}, root) {
+				return errors.New("symbol outside calendar-year research universe")
+			}
+		}
+	}
 	start, err := time.Parse(time.RFC3339Nano, q.Start)
 	if err != nil {
 		return errors.New("databento batch start time invalid")
@@ -153,6 +170,21 @@ func (q BatchQuery) Validate() error {
 	}
 	if !start.Before(end) {
 		return errors.New("databento batch time range invalid")
+	}
+	if q.Study != "" {
+		if start.Before(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)) || end.After(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)) {
+			return errors.New("calendar-year research window outside 2024-2025")
+		}
+		if summary {
+			if start.Before(time.Date(2024, 7, 1, 0, 0, 0, 0, time.UTC)) || end.Sub(start) > 62*24*time.Hour || start.Hour() != 0 || start.Minute() != 0 || start.Second() != 0 || start.Nanosecond() != 0 || end.Hour() != 0 || end.Minute() != 0 || end.Second() != 0 || end.Nanosecond() != 0 {
+				return errors.New("official-close research slices require midnight boundaries within available coverage")
+			}
+			return nil
+		}
+		if end.Sub(start) > 24*time.Hour {
+			return errors.New("calendar-year acquisitions require bounded daily slices")
+		}
+		return nil
 	}
 	batchStart, err := time.Parse(time.RFC3339Nano, BatchStart)
 	if err != nil {

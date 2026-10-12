@@ -36,12 +36,12 @@ type operatorFeatures struct {
 }
 
 func operatorAPI(read func() status, mode, dir string, wake chan<- struct{}, features ...operatorFeatures) http.Handler {
-	var pending atomic.Pointer[wheel.SelectionMode]
+	var pending atomic.Pointer[selectionOverride]
 	readCurrent := read
 	read = func() status {
 		s := readCurrent()
 		if requested := pending.Load(); requested != nil {
-			s.PendingSelectionMode = *requested
+			s.PendingSelectionMode, s.PendingStrategyPreset = requested.Mode, requested.Preset
 			s.Mode, s.Stage, s.Halted = "read_only", "selection_restart_required", true
 			s.Reason = "Selection change saved or unconfirmed; restart the daemon and verify the loaded mode"
 			s.LiveReadiness, s.Candidates = nil, nil
@@ -75,7 +75,7 @@ func operatorAPI(read func() status, mode, dir string, wake chan<- struct{}, fea
 			controls = features[0].SubmitMu
 		}
 	}
-	mux.HandleFunc("POST /control/selection/{mode}", func(w http.ResponseWriter, r *http.Request) {
+	changeSelection := func(w http.ResponseWriter, r *http.Request) {
 		if !nativeControlRequest(r) {
 			http.Error(w, "native operator request required", http.StatusForbidden)
 			return
@@ -86,9 +86,9 @@ func operatorAPI(read func() status, mode, dir string, wake chan<- struct{}, fea
 			http.Error(w, "selection control unavailable", http.StatusConflict)
 			return
 		}
-		requested := wheel.SelectionMode(r.PathValue("mode"))
-		if _, err := activation.Config.WithSelectionMode(requested); err != nil {
-			http.Error(w, "unknown selection mode", http.StatusBadRequest)
+		requested := selectionOverride{Mode: wheel.SelectionMode(r.PathValue("mode")), Preset: r.PathValue("preset")}
+		if _, err := requested.apply(activation.Config); err != nil {
+			http.Error(w, "unknown selection mode or strategy preset", http.StatusBadRequest)
 			return
 		}
 		// Persist the submission fence before changing policy. This lock is also
@@ -100,12 +100,14 @@ func operatorAPI(read func() status, mode, dir string, wake chan<- struct{}, fea
 		// A failed directory sync can follow a successful rename. Keep activation
 		// fenced until restart even when persistence has an uncertain outcome.
 		pending.Store(new(requested))
-		if err := aruntime.AtomicJSON(filepath.Join(dir, "selection.json"), selectionOverride{Mode: requested}); err != nil {
+		if err := aruntime.AtomicJSON(filepath.Join(dir, "selection.json"), requested); err != nil {
 			http.Error(w, "selection persistence unconfirmed; restart and verify", http.StatusInternalServerError)
 			return
 		}
 		w.WriteHeader(http.StatusAccepted)
-	})
+	}
+	mux.HandleFunc("POST /control/selection/{mode}", changeSelection)
+	mux.HandleFunc("POST /control/strategy/{preset}", changeSelection)
 	for _, action := range []string{"halt", "resume", "refresh", "live"} {
 		mux.HandleFunc("POST /control/"+action, func(w http.ResponseWriter, r *http.Request) {
 			if !nativeControlRequest(r) {

@@ -10,7 +10,21 @@ import (
 )
 
 func diagnosticExpiry(date time.Time) bool {
-	return date.Weekday() == time.Friday || slices.Contains([]string{"2026-04-02", "2026-06-18", "2026-07-02"}, date.Format("2006-01-02"))
+	if _, open := wheel.SessionClose(date); !open {
+		return false
+	}
+	if date.Weekday() == time.Friday {
+		return true
+	}
+	for next := date.AddDate(0, 0, 1); next.Weekday() <= time.Friday && next.Weekday() != time.Sunday; next = next.AddDate(0, 0, 1) {
+		if _, open := wheel.SessionClose(next); open {
+			return false
+		}
+		if next.Weekday() == time.Friday {
+			return true
+		}
+	}
+	return false
 }
 
 func yearOrderFunded(q quote, cash, fee int64) bool {

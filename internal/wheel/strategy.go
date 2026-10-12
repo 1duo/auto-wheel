@@ -51,6 +51,9 @@ func PreviewCandidate(c Config, symbol, kind string, quotes []Quote, cost Cents,
 // empty-mode custom bands. Explicit named modes require their exact preset
 // put bands; unknown modes are rejected even when Validate was bypassed.
 func selectionModeFor(c Config) (SelectionMode, bool) {
+	if !c.validStrategyPreset() {
+		return "", false
+	}
 	switch c.SelectionMode {
 	case "":
 		return SelectionBalanced, true
@@ -129,7 +132,10 @@ func selectCandidate(c Config, symbol, kind string, quotes []Quote, cost Cents, 
 		a := Candidate{Quote: q, NetPremium: premium, Collateral: q.Strike * 100, Extrinsic: bid}
 		a.Quantity = 1
 		if kind == "call" {
-			a.Extrinsic = max(0, bid-max(0, q.Spot-q.Strike))
+			a.Extrinsic = bid - max(0, q.Spot-q.Strike)
+			if c.StrategyPreset == "" {
+				a.Extrinsic = max(0, a.Extrinsic)
+			}
 			a.CallAwayPnL = (q.Strike-cost)*100 + premium
 			a.ReturnPerDay = float64(a.Extrinsic*100-c.Fee) / float64(q.Spot*100) / days
 		} else {
@@ -138,11 +144,11 @@ func selectCandidate(c Config, symbol, kind string, quotes []Quote, cost Cents, 
 		candidates = append(candidates, a)
 	}
 	slices.SortFunc(candidates, func(a, b Candidate) int {
-		if kind == "call" {
+		if c.StrategyPreset == "" && kind == "call" {
 			if d := cmp.Compare(b.Delta, a.Delta); d != 0 {
 				return d
 			}
-		} else if mode == SelectionConservative {
+		} else if c.StrategyPreset == "" && mode == SelectionConservative {
 			if d := cmp.Compare(math.Abs(a.Delta), math.Abs(b.Delta)); d != 0 {
 				return d
 			}
@@ -289,10 +295,10 @@ func Plan(c Config, st State, s Snapshot, candidates []Candidate, now time.Time)
 			}
 			return 1
 		}
-		if p := cmp.Compare(priority(a.Kind), priority(b.Kind)); p != 0 {
+		if p := cmp.Compare(priority(a.Kind), priority(b.Kind)); c.StrategyPreset == "" && p != 0 {
 			return p
 		}
-		if mode == SelectionConservative && a.Kind == "put" && b.Kind == "put" {
+		if c.StrategyPreset == "" && mode == SelectionConservative && a.Kind == "put" && b.Kind == "put" {
 			if d := cmp.Compare(math.Abs(a.Delta), math.Abs(b.Delta)); d != 0 {
 				return d
 			}

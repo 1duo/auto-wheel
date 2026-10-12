@@ -29,26 +29,27 @@ import (
 var version = "dev"
 
 type status struct {
-	TradingWindowOpen    bool                      `json:"trading_window_open"`
-	Version              string                    `json:"version"`
-	Mode                 string                    `json:"mode"`
-	Stage                string                    `json:"stage"`
-	Reason               string                    `json:"reason,omitempty"`
-	At                   time.Time                 `json:"at"`
-	Candidates           []wheel.Candidate         `json:"candidates,omitempty"`
-	Positions            map[string]wheel.Position `json:"positions,omitempty"`
-	Intents              map[string]wheel.Intent   `json:"intents,omitempty"`
-	Broker               *wheel.Snapshot           `json:"broker,omitempty"`
-	AccountInfo          *robinhood.AccountInfo    `json:"account_info,omitempty"`
-	Config               wheel.Config              `json:"config"`
-	AccountConfigured    bool                      `json:"account_configured"`
-	TokenPresent         bool                      `json:"token_present"`
-	Halted               bool                      `json:"halted"`
-	ServerTime           time.Time                 `json:"server_time"`
-	LiveCapable          bool                      `json:"live_capable"`
-	LiveReadiness        *liveReadiness            `json:"live_readiness,omitempty"`
-	Coordinator          *sharedclient.Status      `json:"coordinator,omitempty"`
-	PendingSelectionMode wheel.SelectionMode       `json:"pending_selection_mode,omitempty"`
+	TradingWindowOpen     bool                      `json:"trading_window_open"`
+	Version               string                    `json:"version"`
+	Mode                  string                    `json:"mode"`
+	Stage                 string                    `json:"stage"`
+	Reason                string                    `json:"reason,omitempty"`
+	At                    time.Time                 `json:"at"`
+	Candidates            []wheel.Candidate         `json:"candidates,omitempty"`
+	Positions             map[string]wheel.Position `json:"positions,omitempty"`
+	Intents               map[string]wheel.Intent   `json:"intents,omitempty"`
+	Broker                *wheel.Snapshot           `json:"broker,omitempty"`
+	AccountInfo           *robinhood.AccountInfo    `json:"account_info,omitempty"`
+	Config                wheel.Config              `json:"config"`
+	AccountConfigured     bool                      `json:"account_configured"`
+	TokenPresent          bool                      `json:"token_present"`
+	Halted                bool                      `json:"halted"`
+	ServerTime            time.Time                 `json:"server_time"`
+	LiveCapable           bool                      `json:"live_capable"`
+	LiveReadiness         *liveReadiness            `json:"live_readiness,omitempty"`
+	Coordinator           *sharedclient.Status      `json:"coordinator,omitempty"`
+	PendingSelectionMode  wheel.SelectionMode       `json:"pending_selection_mode,omitempty"`
+	PendingStrategyPreset string                    `json:"pending_strategy_preset,omitempty"`
 }
 
 func main() {

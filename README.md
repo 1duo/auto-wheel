@@ -51,3 +51,9 @@ Live operation additionally requires authenticated readiness, verified account o
 - Remaining commands, simulation/market-data packages, and `scripts/`: offline research and acquisition tools. Vendor credentials and licensed datasets are supplied separately.
 
 [Simulation design](docs/simulation-design.md) explains causal data and execution assumptions. Retrospective universe selection and modeled fills are disclosed; simulated returns are not broker performance. This repository excludes personal account reports, market-data captures, and local Git history.
+
+## 2024–2025 research
+
+See [strategy presets and offline simulation](docs/multiyear-research.md). The
+new presets are research candidates; switching always pauses and requires fresh
+readiness after restart. Licensed data and account balances stay outside Git.

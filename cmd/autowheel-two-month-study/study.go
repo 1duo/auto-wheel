@@ -244,6 +244,9 @@ func study(in input) ([]result, []selection, error) {
 }
 
 func validateInput(in input) error {
+	if in.Schema == "AutoWheelCalendarYearEndpointInputV1" {
+		return validateCalendarYearInput(in)
+	}
 	if in.Schema == "AutoWheelYearToDateEndpointInputV1" {
 		return validateYearToDateInput(in)
 	}
@@ -276,7 +279,8 @@ func validateStudySchedule(in input, expected, entries []string) error {
 		return errors.New("missing study session")
 	}
 	for i, d := range in.Days {
-		if d.Date != expected[i] || (d.Entry != nil) != slices.Contains(entries, d.Date) || d.Close.At.In(wheel.Eastern).Format("2006-01-02 15:04:05") != d.Date+" 16:00:00" {
+		closeAt, open := wheel.SessionClose(d.Close.At)
+		if !open || d.Date != expected[i] || (d.Entry != nil) != slices.Contains(entries, d.Date) || d.Close.At.In(wheel.Eastern).Format("2006-01-02") != d.Date || !d.Close.At.Equal(closeAt) {
 			return errors.New("incorrect session schedule")
 		}
 		if err := validateSample(d.Close, in.Symbol); err != nil {
@@ -339,14 +343,29 @@ func run() error {
 	output := flag.String("output", "", "exclusive report")
 	endpoint := flag.Bool("endpoint-recovery", false, "separate baseline-only endpoint diagnostic; missing daily equity remains null")
 	portfolio := flag.Bool("shared-portfolio", false, "offline ten-symbol ROI-ranked account with three managed slots")
+	calendarYear := flag.Int("calendar-year", 0, "2024 or 2025 shared portfolio with frozen research presets")
+	frozenSelection := flag.String("frozen-selection", "", "2024-only frozen selection required for the 2025 evaluation")
+	planOnly := flag.Bool("plan-only", false, "write the frozen calendar-year schedule and strategy plan without reading market data")
 	seed := flag.Int64("starting-cash-cents", 0, "observed cash seed for shared portfolio")
 	ceiling := flag.Int64("max-collateral-cents", 15_000_000, "shared portfolio exposure ceiling; puts remain cash-secured")
 	flag.Parse()
+	if *planOnly {
+		if *path != "" || *output == "" || flag.NArg() != 0 || !*portfolio {
+			return errors.New("plan-only requires shared-portfolio, calendar-year and output; no input")
+		}
+		return writeCalendarYearPlan(*output, *calendarYear)
+	}
 	if *path == "" || *output == "" || flag.NArg() != 0 {
 		return errors.New("provide --input and --output")
 	}
 	if *portfolio {
+		if *calendarYear != 0 {
+			return runCalendarYearPortfolio(*path, *output, *seed, *ceiling, *calendarYear, *frozenSelection)
+		}
 		return runPortfolio(*path, *output, *seed, *ceiling)
+	}
+	if *calendarYear != 0 {
+		return errors.New("calendar-year requires shared-portfolio")
 	}
 	b, err := os.ReadFile(*path)
 	if err != nil {

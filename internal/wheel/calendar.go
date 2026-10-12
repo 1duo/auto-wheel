@@ -2,11 +2,19 @@ package wheel
 
 import "time"
 
-// Reviewed NYSE/NASDAQ closures for 2026-2028.
+// Reviewed NYSE/NASDAQ closures for 2024-2028.
 // Outside coverage all orders are blocked; no inferred future calendar.
 // Sources: https://www.nyse.com/trade/hours-calendars and
 // https://nasdaqtrader.com/Trader.aspx?id=Calendar (reviewed 2026-10-04).
+// Historical additions reviewed 2026-10-11 against the NYSE 2024/2025 yearly
+// calendars and National_Day_of_Mourning_20250102.pdf (January 9, 2025).
 var exchangeHolidays = map[string]struct{}{
+	"2024-01-01": {}, "2024-01-15": {}, "2024-02-19": {}, "2024-03-29": {},
+	"2024-05-27": {}, "2024-06-19": {}, "2024-07-04": {}, "2024-09-02": {},
+	"2024-11-28": {}, "2024-12-25": {},
+	"2025-01-01": {}, "2025-01-09": {}, "2025-01-20": {}, "2025-02-17": {},
+	"2025-04-18": {}, "2025-05-26": {}, "2025-06-19": {}, "2025-07-04": {},
+	"2025-09-01": {}, "2025-11-27": {}, "2025-12-25": {},
 	"2026-01-01": {}, "2026-01-19": {}, "2026-02-16": {}, "2026-04-03": {},
 	"2026-05-25": {}, "2026-06-19": {}, "2026-07-03": {}, "2026-09-07": {},
 	"2026-11-26": {}, "2026-12-25": {},
@@ -20,6 +28,8 @@ var exchangeHolidays = map[string]struct{}{
 
 // 13:00 ET early closes with a 12:45 order cutoff.
 var earlyCloses = map[string]struct{}{
+	"2024-07-03": {}, "2024-11-29": {}, "2024-12-24": {},
+	"2025-07-03": {}, "2025-11-28": {}, "2025-12-24": {},
 	"2026-11-27": {},
 	"2026-12-24": {},
 	"2027-11-26": {},
@@ -30,7 +40,21 @@ var earlyCloses = map[string]struct{}{
 // CalendarKnown reports whether explicit calendar coverage exists for now.
 func CalendarKnown(now time.Time) bool {
 	y := now.In(Eastern).Year()
-	return y >= 2026 && y <= 2028
+	return y >= 2024 && y <= 2028
+}
+
+// SessionClose returns the equity and standard equity-option regular-session
+// closing clock. Unknown calendars, weekends and exchange holidays fail closed.
+func SessionClose(date time.Time) (time.Time, bool) {
+	d := date.In(Eastern)
+	if !CalendarKnown(d) || d.Weekday() == time.Saturday || d.Weekday() == time.Sunday || isExchangeHoliday(d.Format("2006-01-02")) {
+		return time.Time{}, false
+	}
+	hour := 16
+	if isEarlyClose(d.Format("2006-01-02")) {
+		hour = 13
+	}
+	return time.Date(d.Year(), d.Month(), d.Day(), hour, 0, 0, 0, Eastern), true
 }
 
 func isExchangeHoliday(date string) bool {

@@ -177,6 +177,7 @@ func TestConservativeTieBreakDeterministic(t *testing.T) {
 
 func TestPlanConservativeVsBalancedOrdering(t *testing.T) {
 	c, st, s, _, now := fixture()
+	c.Symbols = []string{"NVDA", "TSLA"} // Explicit synthetic universe, independent of deployment defaults.
 	cons, err := c.WithSelectionMode(SelectionConservative)
 	if err != nil {
 		t.Fatal(err)
@@ -237,6 +238,7 @@ func TestCallsRetainedBothModes(t *testing.T) {
 	for _, cfg := range []Config{cons, bal} {
 		_, st, s, _, n := fixture()
 		cfg.Account = "12345678"
+		cfg.Symbols = []string{"NVDA", "TSLA"}
 		st.Positions["NVDA"] = Position{OwnedShares: 100, Cost: 20000, Provenance: "own assignment"}
 		s.Shares = []Shares{{Symbol: "NVDA", Quantity: 100, Available: 100, Cost: 20000}}
 		call := Candidate{

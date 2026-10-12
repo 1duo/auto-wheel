@@ -200,6 +200,10 @@ func portfolioDividendCents(f portfolioDividend, shares int) (int64, error) {
 }
 
 func simulatePortfolio(inputs []input, base profile, seed, fee, allowance, ceiling int64, facts []portfolioDividend, supplements map[string]int64) (map[string]any, error) {
+	return simulatePortfolioWithActions(inputs, base, seed, fee, allowance, ceiling, facts, supplements, nil)
+}
+
+func simulatePortfolioWithActions(inputs []input, base profile, seed, fee, allowance, ceiling int64, facts []portfolioDividend, supplements map[string]int64, actions []historicalAction) (map[string]any, error) {
 	if seed <= 0 || seed > 100_000_000 || ceiling <= 0 || ceiling > 15_000_000 || fee < 0 || fee > 200 || allowance < 0 || allowance > 1 || len(inputs) == 0 {
 		return nil, errors.New("invalid portfolio scope or money bounds")
 	}
@@ -213,6 +217,14 @@ func simulatePortfolio(inputs []input, base profile, seed, fee, allowance, ceili
 	orders, trades, daily := []portfolioOrder{}, []portfolioTrade{}, []portfolioPoint{}
 	peakCommit, peakSlots, supplementalMarks := int64(0), 0, 0
 	for index, date := range inputs[0].Days {
+		for _, action := range actions {
+			if action.Date == date.Date {
+				a := accounts[action.Symbol]
+				if a == nil || a.Shares != 0 || a.Short != nil {
+					return nil, fmt.Errorf("unsupported held corporate action: %s %s; cannot erase or resize inventory", action.Date, action.Symbol)
+				}
+			}
+		}
 		// Prior-session shares establish entitlement; receivables cannot fund orders.
 		for _, f := range facts {
 			if f.ExDate != date.Date {

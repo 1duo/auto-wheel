@@ -25,6 +25,7 @@ type profile struct {
 	PutCeiling  float64             `json:"put_delta_ceiling"`
 	CallCeiling float64             `json:"call_delta_ceiling"`
 	SpreadBPS   int                 `json:"max_spread_bps"`
+	Preset      string              `json:"strategy_preset,omitempty"`
 }
 
 func baseline(mode wheel.SelectionMode) profile {
@@ -307,6 +308,13 @@ func validateValuationMarks(s sample, symbol string) error {
 
 func selectContract(symbol string, p profile, fee int64, s sample, cost int64) (quote, float64, float64, map[string]int, bool) {
 	c := wheel.DefaultConfig()
+	if p.Preset != "" {
+		var err error
+		c, err = c.WithStrategyPreset(p.Preset)
+		if err != nil {
+			return quote{}, 0, 0, map[string]int{"unknown_preset": 1}, false
+		}
+	}
 	c.Symbols = []string{symbol}
 	c.SelectionMode = p.Mode
 	c.CallMaxDelta = p.CallCeiling
@@ -330,7 +338,12 @@ func selectContract(symbol string, p profile, fee int64, s sample, cost int64) (
 		if q.Kind != kind {
 			continue
 		}
-		expiry, _ := time.ParseInLocation("2006-01-02 15:04", q.Expiry+" 16:00", wheel.Eastern)
+		expiryDate, _ := time.ParseInLocation("2006-01-02", q.Expiry, wheel.Eastern)
+		expiry, open := wheel.SessionClose(expiryDate)
+		if !open {
+			rejected["expiry_calendar_rejected"]++
+			continue
+		}
 		optionType := optionmodel.Put
 		if kind == "call" {
 			optionType = optionmodel.Call

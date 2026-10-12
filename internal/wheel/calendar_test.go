@@ -39,7 +39,12 @@ func TestTradingWindowExchangeCalendar(t *testing.T) {
 		{"2026-10-04 11:00:00", false},
 		{"2026-03-09 09:35:00", true}, // Daylight-saving transition.
 		{"2026-11-02 09:35:00", true},
-		{"2025-10-06 11:00:00", false}, // Calendar coverage must be explicit.
+		{"2025-10-06 11:00:00", true},
+		{"2025-01-09 11:00:00", false},
+		{"2024-07-03 12:44:59", true},
+		{"2024-07-03 12:45:00", false},
+		{"2025-12-24 12:45:00", false},
+		{"2023-10-06 11:00:00", false}, // Calendar coverage must be explicit.
 		{"2029-10-05 11:00:00", false},
 	} {
 		t.Run(tc.at, func(t *testing.T) {

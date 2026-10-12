@@ -15,7 +15,18 @@ import (
 )
 
 type selectionOverride struct {
-	Mode wheel.SelectionMode `json:"mode"`
+	Mode   wheel.SelectionMode `json:"mode,omitempty"`
+	Preset string              `json:"preset,omitempty"`
+}
+
+func (s selectionOverride) apply(c wheel.Config) (wheel.Config, error) {
+	if (s.Mode == "") == (s.Preset == "") {
+		return c, errors.New("require exactly one selection mode or strategy preset")
+	}
+	if s.Preset != "" {
+		return c.WithStrategyPreset(s.Preset)
+	}
+	return c.WithSelectionMode(s.Mode)
 }
 
 func pauseForSelection(a *activationControl, dir string) error {
@@ -74,7 +85,7 @@ func loadSelectionOverride(c wheel.Config, dir string) (wheel.Config, error) {
 	if d.Decode(&extra) != io.EOF {
 		return c, errors.New("selection policy has trailing content")
 	}
-	c, err = c.WithSelectionMode(override.Mode)
+	c, err = override.apply(c)
 	if err != nil {
 		return c, err
 	}
