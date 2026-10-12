@@ -66,7 +66,7 @@ func run() error {
 	}
 	report.StrategySHA256 = hex.EncodeToString(hash.Sum(nil))
 	hash.Reset()
-	for _, path := range []string{"internal/simulation/types.go", "internal/simulation/replay.go", "internal/simulation/multiyear.go", "internal/researchselection/selection.go", "internal/simulation/selection_omission.go", "internal/simulation/fixture.go", "cmd/autowheel-sim/main.go", "cmd/autowheel-sim/frozen_input.go"} {
+	for _, path := range []string{"internal/simulation/types.go", "internal/simulation/replay.go", "internal/simulation/settlement.go", "internal/simulation/multiyear.go", "internal/researchselection/selection.go", "internal/simulation/selection_omission.go", "internal/simulation/fixture.go", "cmd/autowheel-sim/main.go", "cmd/autowheel-sim/frozen_input.go"} {
 		content, err := os.ReadFile(filepath.Join(*root, path))
 		if err != nil {
 			return err

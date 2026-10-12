@@ -64,7 +64,13 @@ symbol and the complete study period, and supplies source-pinned `actions` and
 contract and $2 plus a one-cent price allowance are separate cost cases.
 
 The calendar includes the January 9, 2025 mourning closure and each historical
-early close. A held unsupported corporate action stops the run. Do not erase
+early close. Continuous replay calculates T+1 using the separate reviewed
+2024–2026 OCC/banking calendar: January 9, 2025 permits settlement; Columbus
+Day and Veterans Day delay it despite open trading. Good Friday remains an OCC
+holiday. The assumed 09:30 cash-availability clock is not a broker receipt;
+unreviewed settlement years keep proceeds locked. Physical lifecycle events
+with a bank-holiday settlement date are rejected. A held unsupported corporate
+action stops the run. Do not erase
 inventory, resize option exposure without OCC evidence, or combine adjusted
 stock prices with raw option strikes. Broadcom's July 2024 and ServiceNow's
 December 2025 splits require explicit coverage. NVIDIA's June 2024 split precedes
@@ -123,6 +129,10 @@ experiment logs and performance artifacts stay outside Git.
 - [NYSE 2024 calendar](https://www.nyse.com/publicdocs/ICE_NYSE_2024_Yearly_Trading_Calendar.pdf)
 - [NYSE 2025 calendar](https://www.nyse.com/publicdocs/ICE_NYSE_2025_Yearly_Trading_Calendar.pdf)
 - [January 9, 2025 closure](https://www.nyse.com/publicdocs/nyse/markets/american-options/rule-interpretations/2025/National_Day_of_Mourning_20250102.pdf)
+- [OCC 2024 calendar](https://infomemo.theocc.com/infomemos?number=53701)
+- [OCC 2025 calendar](https://infomemo.theocc.com/infomemos?number=55737)
+- [OCC 2026 calendar](https://infomemo.theocc.com/infomemos?number=57897)
+- [OCC January 9 settlement procedures](https://infomemo.theocc.com/infomemos?number=55826)
 - [NVIDIA OCC adjustment](https://infomemo.theocc.com/infomemos?number=54623)
 - [Broadcom 2024 split announcement](https://investors.broadcom.com/static-files/df9ff86d-bc30-4901-9884-299b17619d46)
 - [ServiceNow split approval](https://investor.servicenow.com/news/news-details/2025/ServiceNow-Shareholders-Approve-5-for-1-Stock-Split/default.aspx)

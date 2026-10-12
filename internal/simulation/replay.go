@@ -80,6 +80,7 @@ func Replay(input io.Reader) Report {
 		"GFD sell limit at decision bid: 1-second latency, then 5-second sized bid dwell with observations no more than 1 second apart; no queue-priority proof or price improvement.",
 		"Scanning and broker review are instantaneous modeled approvals; historical quotes cannot prove Robinhood acceptance, scan latency or execution. Production Execute pre-submit checks run against the simulated snapshot.",
 		"Explicit modeled assignment/expiry/forced-close events; supplied settlement dates control cash/share reuse; production 24-hour ownership inference is retained.",
+		"T+1 uses reviewed 2024-2026 OCC/banking settlement days, including the January 9, 2025 settlement opening and bank-only holidays. The 09:30 availability clock is a modeling assumption, not a broker settlement receipt; unknown calendars keep proceeds locked.",
 		"NAV includes economic cash and stock at bid less short-option ask liabilities; cash premiums alone are not profit. No interest, taxes or data-subscription costs.",
 		"Drawdown is measured at session closes; intraday drawdown can be worse. Coverage declarations require independent vendor/normalizer audit; they are not broker receipts.",
 		"Peer reservation scenarios hold idle cash and exclude peer symbols; they do not reconstruct historical TradePulse trades or profits.",
@@ -941,7 +942,7 @@ func (r *replay) fill(f Frame) error {
 			return nil
 		}
 		// No expected premium financed admission; it becomes economic cash
-		// only here, and is unavailable until the next reviewed session.
+		// only here, and is unavailable until the next reviewed settlement day.
 		fee := r.report.Spec.Config.Fee
 		cash := p.Candidate.Bid*100 - fee
 		if err := r.changeCash(cash); err != nil {
@@ -998,11 +999,11 @@ func nextSettlement(at time.Time) time.Time {
 	d := time.Date(t.Year(), t.Month(), t.Day(), 9, 35, 0, 0, wheel.Eastern)
 	for range 10 {
 		d = d.AddDate(0, 0, 1)
-		if wheel.TradingWindow(d) {
+		if settlementDay(d) {
 			return d.Add(-5 * time.Minute)
 		}
 	}
-	return at.Add(1000 * 24 * time.Hour) // Outside known sessions funds remain locked.
+	return at.Add(1000 * 24 * time.Hour) // Outside known settlement dates funds remain locked.
 }
 
 func (r *replay) expireOrder() {
@@ -1020,8 +1021,8 @@ func (r *replay) lifecycle(l Lifecycle) error {
 	if !ok || l.Assumption == "" || l.SettledAt.IsZero() || l.SettledAt.Before(r.now) {
 		return errors.New("unowned lifecycle or missing model/settlement assumption")
 	}
-	if (l.Outcome == "assigned" || l.Outcome == "called_away") && l.SettledAt.Before(nextSettlement(r.now)) {
-		return errors.New("physical lifecycle cannot reuse funds/shares before T+1")
+	if (l.Outcome == "assigned" || l.Outcome == "called_away") && (!settlementDay(l.SettledAt) || l.SettledAt.Before(nextSettlement(r.now))) {
+		return errors.New("physical lifecycle requires a reviewed settlement day at or after T+1")
 	}
 	exp, _ := time.ParseInLocation("2006-01-02", op.Expiry, wheel.Eastern)
 	if l.Outcome == "expired" && r.now.Before(sessionClose(exp)) {
