@@ -75,6 +75,12 @@ inventory, resize option exposure without OCC evidence, or combine adjusted
 stock prices with raw option strikes. Broadcom's July 2024 and ServiceNow's
 December 2025 splits require explicit coverage. NVIDIA's June 2024 split precedes
 the flat July start; historical prices must use the correct post-split basis.
+The OCC adjustment terms multiply the count of an existing AVGO option by ten
+and a NOW option by five, while dividing its strike by the same factor. The
+premium dollar multiplier and deliverable of each resulting contract remain
+100. Repricing one contract without changing its count would lose exposure and
+invalidate accounting. The current held-action stop stays in place until the
+native instrument transition and the resulting position limits are supported.
 
 Outputs include cash, stock and short-option liability ledgers, total return,
 drawdown, cash utilization and each month's closing cash and equity. Missing
@@ -135,7 +141,9 @@ experiment logs and performance artifacts stay outside Git.
 - [OCC January 9 settlement procedures](https://infomemo.theocc.com/infomemos?number=55826)
 - [NVIDIA OCC adjustment](https://infomemo.theocc.com/infomemos?number=54623)
 - [Broadcom 2024 split announcement](https://investors.broadcom.com/static-files/df9ff86d-bc30-4901-9884-299b17619d46)
+- [Broadcom OCC option adjustment](https://infomemo.theocc.com/infomemos?number=54716)
 - [ServiceNow split approval](https://investor.servicenow.com/news/news-details/2025/ServiceNow-Shareholders-Approve-5-for-1-Stock-Split/default.aspx)
+- [ServiceNow OCC option adjustment](https://infomemo.theocc.com/infomemos?number=57868)
 - [Databento official raw closes](https://databento.com/docs/examples/equities/closing-prices)
 
 Provider metadata checked on October 11, 2026 covers both years for OPRA CMBP-1
