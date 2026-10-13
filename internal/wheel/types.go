@@ -81,7 +81,7 @@ type Config struct {
 }
 
 func DefaultConfig() Config {
-	return Config{Symbols: []string{"NVDA", "IREN", "NOW", "AMD", "AMZN", "GOOGL", "META", "MSFT", "PLTR", "AVGO"},
+	return Config{Symbols: []string{"NVDA", "IREN", "AMD", "AMZN", "GOOGL", "AVGO", "NBIS", "COIN", "MSTR", "HOOD"},
 		MaxSymbols: 3, SymbolLimitScope: "managed", MaxCollateral: 8_000_000, Fee: 100, MinBid: 5, MinOI: 100, MaxSpreadBPS: 2000,
 		PutMinDelta: .15, PutMaxDelta: .35, CallMinDelta: .50, CallMaxDelta: .85, AllowBelowCost: true,
 		MaxQuoteAgeSeconds: 30, MaxDays: 8, PollSeconds: 300}

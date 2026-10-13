@@ -477,6 +477,10 @@ func runPortfolioUniverse(root, output string, seed, ceiling int64, availablePre
 	if err := read(filepath.Join(root, "dividend-facts.json"), &dividends); err != nil {
 		return err
 	}
+	// A caller-frozen subset cannot own shares in omitted research symbols.
+	dividends.Facts = slices.DeleteFunc(dividends.Facts, func(f portfolioDividend) bool {
+		return !slices.Contains(symbols, f.Symbol)
+	})
 	var recovered struct {
 		Observations []struct {
 			Date     string `json:"date"`

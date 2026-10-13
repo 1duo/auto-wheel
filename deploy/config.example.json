@@ -3,14 +3,14 @@
   "symbols": [
     "NVDA",
     "IREN",
-    "NOW",
     "AMD",
     "AMZN",
     "GOOGL",
-    "META",
-    "MSFT",
-    "PLTR",
-    "AVGO"
+    "AVGO",
+    "NBIS",
+    "COIN",
+    "MSTR",
+    "HOOD"
   ],
   "max_symbols": 3,
   "max_collateral_cents": 8000000,

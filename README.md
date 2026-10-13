@@ -4,6 +4,8 @@ Deterministic cash-secured puts → assigned shares → covered calls through Ro
 
 One cash account, at most three managed symbols, one contract per symbol. Defaults: conservative put delta 0.05–0.15 and an $80,000 collateral ceiling. Requires Go 1.26.9+; `go.mod` selects Go 1.27.2.
 
+Selected ten: NVDA, IREN, AMD, AMZN, GOOGL, AVGO, NBIS, COIN, MSTR, HOOD. See [selection method and limits](docs/universe.md).
+
 ```sh
 go build -trimpath -o bin/autowheel ./cmd/autowheel
 umask 077
