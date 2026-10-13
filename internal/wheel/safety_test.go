@@ -129,8 +129,8 @@ func TestSlotsCashCoverage(t *testing.T) {
 	limited := c
 	limited.MaxCollateral = a.Collateral * 2
 	plan, err = Plan(limited, st, s, candidates, now)
-	if err != nil || len(plan) != 1 {
-		t.Fatal("fee reserve bypassed capital ceiling")
+	if err != nil || len(plan) != 0 {
+		t.Fatal("a reduced account ceiling bypassed its per-symbol allocation")
 	}
 	s.AvailableCash = a.Collateral * 2
 	plan, err = Plan(c, st, s, candidates, now)
@@ -247,7 +247,8 @@ func TestCancellationPreservesFillAndRef(t *testing.T) {
 	a, _ := Select(c, q.Symbol, "put", []Quote{q}, 0, now)
 	st.Intents["NVDA"] = Intent{Ref: "ref-1", Candidate: a, At: now}
 	s.Orders = []Order{{ID: "order-1", Ref: "ref-1", Symbol: "NVDA", OptionID: q.ID, Side: "sell", Effect: "open", Quantity: 1, Filled: 1, State: "cancelled"}}
-	s.Options = []Option{{ID: q.ID, Symbol: q.Symbol, Kind: q.Kind, Strike: q.Strike, Quantity: 1}}
+	s.Options = []Option{q.Option}
+	s.Options[0].Quantity = 1
 	if err := Reconcile(&st, s, now); err != nil || st.Positions["NVDA"].PutID != q.ID || len(st.Intents) != 0 {
 		t.Fatal("cancellation lost fill")
 	}

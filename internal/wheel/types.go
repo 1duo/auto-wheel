@@ -87,6 +87,20 @@ func DefaultConfig() Config {
 		MaxQuoteAgeSeconds: 30, MaxDays: 8, PollSeconds: 300}
 }
 
+// SymbolCollateralLimit allocates the fixed account ceiling across managed
+// slots. It does not grow with profits or shrink an existing owned position.
+func (c Config) SymbolCollateralLimit() Cents {
+	if c.MaxCollateral <= 0 || c.MaxCollateral > MaxMoney || c.MaxSymbols < 1 || c.MaxSymbols > 3 {
+		return 0
+	}
+	return c.MaxCollateral / Cents(c.MaxSymbols)
+}
+
+// FitsSymbolCollateral includes the entry fee without overflowing money.
+func FitsSymbolCollateral(collateral, fee, limit Cents) bool {
+	return collateral > 0 && limit > 0 && limit <= MaxMoney && fee >= 0 && fee <= limit && collateral <= limit-fee
+}
+
 // EffectiveSelectionMode reports the active put-selection discipline.
 // Empty preserves legacy balanced behavior for existing configs.
 func (c Config) EffectiveSelectionMode() SelectionMode {

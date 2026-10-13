@@ -19,6 +19,7 @@ func TestOperatorControlBoundary(t *testing.T) {
 		r.Host = "127.0.0.1:19841"
 		r.Header.Set("Origin", origin)
 		r.Header.Set("X-AutoWheel-Control", header)
+		authorizeOperatorRequest(t, r, dir)
 		w := httptest.NewRecorder()
 		operatorAPI(read, mode, dir, wake).ServeHTTP(w, r)
 		return w.Code

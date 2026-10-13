@@ -116,6 +116,8 @@ func TestObservedQuoteShapesAndDeliverableProof(t *testing.T) {
 	stamp := now.Format(time.RFC3339Nano)
 	ticks := object{"above_tick": "0.05", "below_tick": "0.01", "cutoff_price": "3.00"}
 	var adjusted, missingQuote atomic.Bool
+	var malformed atomic.Value
+	malformed.Store("")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req object
 		json.NewDecoder(r.Body).Decode(&req)
@@ -140,15 +142,52 @@ func TestObservedQuoteShapesAndDeliverableProof(t *testing.T) {
 					t.Error("expiration filter must be a string")
 				}
 				kind := args["type"].(string)
-				data = object{"next": "", "instruments": []any{object{"id": kind, "chain_id": "chain", "chain_symbol": "NVDA", "type": kind, "expiration_date": date, "strike_price": "230.0000", "trade_value_multiplier": "100.0000", "underlying_type": "equity", "tradability": "tradable", "state": "active", "min_ticks": ticks}}}
+				meta := object{"id": kind, "chain_id": "chain", "chain_symbol": "NVDA", "type": kind, "expiration_date": date, "strike_price": "230.0000", "trade_value_multiplier": "100.0000", "underlying_type": "equity", "tradability": "tradable", "state": "active", "min_ticks": ticks}
+				second := maps.Clone(meta)
+				second["id"] = kind + "-second"
+				switch malformed.Load().(string) {
+				case "strike":
+					second["strike_price"] = "invalid"
+				case "zero_strike":
+					second["strike_price"] = "0.00"
+				case "missing_ticks":
+					delete(second, "min_ticks")
+				case "invalid_cutoff":
+					second["min_ticks"] = object{"cutoff_price": "invalid"}
+				case "zero_tick":
+					second["min_ticks"] = object{"cutoff_price": "3.00", "below_tick": "0.00"}
+				}
+				data = object{"next": "", "instruments": []any{meta, second}}
+				if malformed.Load() == "empty_chain" {
+					data["instruments"] = []any{}
+				}
 			case "get_equity_quotes":
 				data = object{"results": []any{object{"quote": object{"symbol": "NVDA", "last_trade_price": "233.9912", "venue_last_trade_time": stamp, "has_traded": true, "state": "active"}}}}
 			case "get_option_quotes":
-				var q any = object{"instrument_id": "put", "bid_price": "1.70", "ask_price": "1.76", "delta": "-0.308273", "open_interest": 19561, "bid_size": 4, "updated_at": stamp}
+				quote := object{"instrument_id": "put", "bid_price": "1.70", "ask_price": "1.76", "delta": "-0.308273", "open_interest": 19561, "bid_size": 4, "updated_at": stamp}
+				second := maps.Clone(quote)
+				second["instrument_id"] = "put-second"
+				switch field := malformed.Load().(string); field {
+				case "updated_at", "bid_price", "ask_price", "delta", "open_interest", "bid_size":
+					delete(second, field)
+				case "nan_delta":
+					second["delta"] = "NaN"
+				case "infinite_delta":
+					second["delta"] = "-Inf"
+				case "delta_out_of_range":
+					second["delta"] = "-1.01"
+				case "delta_wrong_sign":
+					second["delta"] = "0.3"
+				case "crossed_book":
+					second["ask_price"] = "1.69"
+				case "zero_liquidity":
+					second["open_interest"], second["bid_size"] = 0, 0
+				}
+				var q any = quote
 				if missingQuote.Load() {
 					q = nil
 				}
-				data = object{"results": []any{object{"quote": q}}}
+				data = object{"results": []any{object{"quote": q}, object{"quote": second}}}
 			case "review_option_order":
 				quantity := "100.00000000"
 				if adjusted.Load() {
@@ -178,9 +217,24 @@ func TestObservedQuoteShapesAndDeliverableProof(t *testing.T) {
 	c.Account = "12345678"
 	b := &Broker{MCP: client, Config: c}
 	qs, err := b.Quotes(t.Context(), "NVDA", "put")
-	if err != nil || len(qs) != 1 || !qs[0].Standard || qs[0].Spot != 23400 || qs[0].OI != 19561 {
+	if err != nil || len(qs) != 2 || !qs[0].Standard || qs[0].Spot != 23400 || qs[0].OI != 19561 {
 		t.Fatal("observed broker shapes rejected", qs, err)
 	}
+	for _, field := range []string{"empty_chain", "strike", "zero_strike", "updated_at", "bid_price", "ask_price", "delta", "open_interest", "bid_size", "missing_ticks", "invalid_cutoff", "zero_tick", "nan_delta", "infinite_delta", "delta_out_of_range", "delta_wrong_sign", "crossed_book"} {
+		t.Run(field, func(t *testing.T) {
+			malformed.Store(field)
+			// A valid first strike cannot justify a partial ranking when another
+			// contract in the same nearest expiry has unproven inputs.
+			if partial, err := b.Quotes(t.Context(), "NVDA", "put"); err == nil || len(partial) != 0 {
+				t.Fatal("malformed nearest-expiry contract yielded a partial chain", err)
+			}
+		})
+	}
+	malformed.Store("zero_liquidity")
+	if qs, err := b.Quotes(t.Context(), "NVDA", "put"); err != nil || len(qs) != 2 || qs[1].OI != 0 || qs[1].BidSize != 0 {
+		t.Fatal("known zero liquidity must remain distinguishable from missing facts", err)
+	}
+	malformed.Store("")
 	adjusted.Store(true)
 	b.proofs = nil
 	if _, err := b.Quotes(t.Context(), "NVDA", "put"); err == nil {

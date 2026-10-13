@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 
 enum OperatorAction: String { case halt, resume, refresh, live }
 enum ServiceAction: String { case start, stop, restart, logs }
@@ -34,13 +35,33 @@ struct OperatorAPI {
         req.timeoutInterval = post ? 35 : 7
         req.cachePolicy = .reloadIgnoringLocalCacheData
         req.httpMethod = post ? "POST" : "GET"
-        if post { req.setValue("confirm", forHTTPHeaderField: "X-AutoWheel-Control") }
+        if post {
+            req.setValue("confirm", forHTTPHeaderField: "X-AutoWheel-Control")
+            req.setValue("Bearer \(try operatorToken())", forHTTPHeaderField: "Authorization")
+        }
         let (data, response) = try await URLSession.shared.data(for: req)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             let message = String(data: data.prefix(1024), encoding: .utf8) ?? "Request failed"
             throw OperatorError.message(message.trimmingCharacters(in: .whitespacesAndNewlines))
         }
         return data
+    }
+    private func operatorToken() throws -> String {
+        let path = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/AutoWheel/operator-token.json").path
+        let fd = Darwin.open(path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
+        guard fd >= 0 else { throw OperatorError.message("Private operator credential unavailable; pair this Mac with the daemon.") }
+        let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+        defer { try? handle.close() }
+        var info = stat()
+        guard fstat(fd, &info) == 0, info.st_mode & mode_t(S_IFMT) == mode_t(S_IFREG),
+              info.st_uid == getuid(), info.st_mode & 0o077 == 0, info.st_size <= 4096,
+              let data = try handle.read(upToCount: 4097),
+              let token = try? JSONDecoder().decode(String.self, from: data), token.utf8.count == 64,
+              token.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }) else {
+            throw OperatorError.message("Operator credential must be a private regular file containing the daemon token.")
+        }
+        return token
     }
 }
 

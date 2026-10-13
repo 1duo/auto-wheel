@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -78,12 +79,12 @@ func operatorAPI(read func() status, mode, dir string, wake chan<- struct{}, fea
 		}
 	}
 	changeSelection := func(w http.ResponseWriter, r *http.Request) {
-		if !nativeControlRequest(r) {
+		controls.Lock()
+		defer controls.Unlock()
+		if !nativeControlRequest(r, dir) {
 			http.Error(w, "native operator request required", http.StatusForbidden)
 			return
 		}
-		controls.Lock()
-		defer controls.Unlock()
 		if activation == nil {
 			http.Error(w, "selection control unavailable", http.StatusConflict)
 			return
@@ -107,17 +108,18 @@ func operatorAPI(read func() status, mode, dir string, wake chan<- struct{}, fea
 			return
 		}
 		w.WriteHeader(http.StatusAccepted)
+		slog.Info("operator control accepted", "selection_mode", requested.Mode, "strategy_preset", requested.Preset)
 	}
 	mux.HandleFunc("POST /control/selection/{mode}", changeSelection)
 	mux.HandleFunc("POST /control/strategy/{preset}", changeSelection)
 	for _, action := range []string{"halt", "resume", "refresh", "live"} {
 		mux.HandleFunc("POST /control/"+action, func(w http.ResponseWriter, r *http.Request) {
-			if !nativeControlRequest(r) {
+			controls.Lock()
+			defer controls.Unlock()
+			if !nativeControlRequest(r, dir) {
 				http.Error(w, "native operator request required", http.StatusForbidden)
 				return
 			}
-			controls.Lock()
-			defer controls.Unlock()
 			if pending.Load() != nil && action != "halt" {
 				http.Error(w, "restart required after selection change", http.StatusConflict)
 				return
@@ -173,6 +175,7 @@ func operatorAPI(read func() status, mode, dir string, wake chan<- struct{}, fea
 			default:
 			}
 			w.WriteHeader(http.StatusAccepted)
+			slog.Info("operator control accepted", "action", action)
 		})
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -187,10 +190,6 @@ func operatorAPI(read func() status, mode, dir string, wake chan<- struct{}, fea
 		}
 		mux.ServeHTTP(w, r)
 	})
-}
-
-func nativeControlRequest(r *http.Request) bool {
-	return r.Header.Get("Origin") == "" && r.Header.Get("X-AutoWheel-Control") == "confirm" && r.ContentLength == 0
 }
 
 func pauseTrading(activation *activationControl, dir, reason string) error {

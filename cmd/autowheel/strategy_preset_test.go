@@ -25,6 +25,7 @@ func TestMultiyearStrategySwitchRevokesActivation(t *testing.T) {
 	}, "read_only", dir, make(chan struct{}, 1), operatorFeatures{Activation: a})
 	r := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:9841/control/strategy/liquid-roi-v1", nil)
 	r.Header.Set("X-AutoWheel-Control", "confirm")
+	authorizeOperatorRequest(t, r, dir)
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, r)
 	if w.Code != http.StatusAccepted {
@@ -74,6 +75,7 @@ func TestMultiyearStrategyRollbackRemainsPaused(t *testing.T) {
 				request := func(handler http.Handler, action string) int {
 					r := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:9841/control/"+action, nil)
 					r.Header.Set("X-AutoWheel-Control", "confirm")
+					authorizeOperatorRequest(t, r, dir)
 					w := httptest.NewRecorder()
 					handler.ServeHTTP(w, r)
 					return w.Code

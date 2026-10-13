@@ -4,6 +4,7 @@ import (
 	"autowheel/internal/wheel"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 )
 
@@ -56,5 +57,39 @@ func TestJournalLockPrivateFilesAndRestart(t *testing.T) {
 	if j, _, err := OpenJournal(dir); err == nil {
 		j.Close()
 		t.Fatal("torn journal accepted")
+	}
+}
+
+func TestPrivateFilesRejectFIFOAndInvalidLock(t *testing.T) {
+	dir := t.TempDir()
+	pipe := filepath.Join(dir, "fifo")
+	if err := syscall.Mkfifo(pipe, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if f, err := PrivateRead(pipe); err == nil {
+		f.Close()
+		t.Fatal("FIFO accepted as private state")
+	}
+	for _, kind := range []string{"public", "fifo"} {
+		t.Run(kind, func(t *testing.T) {
+			stateDir := t.TempDir()
+			lock := filepath.Join(stateDir, "lock")
+			var err error
+			if kind == "fifo" {
+				err = syscall.Mkfifo(lock, 0600)
+			} else {
+				err = os.WriteFile(lock, nil, 0644)
+				if err == nil {
+					err = os.Chmod(lock, 0644)
+				}
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if j, _, err := OpenJournal(stateDir); err == nil {
+				j.Close()
+				t.Fatal("invalid operational lock accepted")
+			}
+		})
 	}
 }

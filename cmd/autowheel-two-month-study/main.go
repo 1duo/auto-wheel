@@ -308,6 +308,9 @@ func validateValuationMarks(s sample, symbol string) error {
 
 func selectContract(symbol string, p profile, fee int64, s sample, cost int64) (quote, float64, float64, map[string]int, bool) {
 	c := wheel.DefaultConfig()
+	// Historical counterfactuals retain their original eligibility. The shared
+	// portfolio applies its explicitly reported capital policy at admission.
+	c.MaxCollateral, c.MaxSymbols = wheel.MaxMoney, 1
 	if p.Preset != "" {
 		var err error
 		c, err = c.WithStrategyPreset(p.Preset)

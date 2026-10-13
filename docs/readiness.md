@@ -11,9 +11,13 @@ Required conditions:
 - Verified separate-account isolation, qualified exclusive peer retirement, or a qualified single execution coordinator. Observation alone grants no execution capability.
 - A reviewed exchange calendar and a fresh readiness/snapshot pair for native activation.
 
-The activation record binds the executable SHA-256 and configuration as well as the release label. Missing, malformed, stale, or mismatched evidence fails closed. Activation is explicitly requested through the native control after readiness; login, doctor, read-only scans, and observer deployment cannot activate trading.
+The activation record binds the executable SHA-256 and configuration as well as the release label. Missing, malformed, stale, or mismatched evidence fails closed. Activation is explicitly requested through the native control after readiness and authenticated with the private installation credential; login, doctor, read-only scans, and observer deployment cannot activate trading.
 
-The daemon permits at most three managed symbols, one contract each. Filled puts retain expiry and strike across restart; inventory is adopted only after settled broker facts and ownership evidence. Absence alone cannot prove expiration before the contract expiry day ends.
+Nearest-expiry quote collection rejects an empty listed contract set, malformed instruments, missing quote/Greek/OI/tick fields, impossible deltas, and crossed books for the entire symbol scan. Known zero liquidity is an ineligible observation, not missing data. This completeness check does not prove an independent provider timestamp for delta or OI: production still receives those fields with the provider's quote `updated_at`, whose Greek/publication-clock meaning requires separate qualification.
+
+The daemon permits at most three managed symbols, one contract each. Reconciliation rejects duplicate option rows and checks owned contract kind, retained expiry, and put strike; pending intents additionally require the exact candidate contract metadata. These checks run before consuming an intent or changing ownership. Filled puts retain expiry and strike across restart; inventory is adopted only after settled broker facts and ownership evidence. Absence alone cannot prove expiration before the contract expiry day ends.
+
+New put collateral and its configured entry fee must also fit the fixed account ceiling divided by the configured managed slot count. This is $26,666.66 with the default $80,000 ceiling and three slots. The guard is repeated during selection and pre-submission planning. It does not force liquidation or block covered exits for previously owned oversized inventory.
 
 Historical simulation proofs qualify their modeled assumptions only. They do not prove broker acceptance, complete provider tool coverage, or live release readiness.
 

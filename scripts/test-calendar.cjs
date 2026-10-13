@@ -118,4 +118,13 @@ assert.equal(attachedReports(cleanedHTML.match(/application\/json">([\s\S]*)<\/s
 assert.throws(() => normalize({...mixed,results:[mixed.results[1]]}, 'other-fee.json'), /no results using the saved Robinhood/);
 assert.throws(() => normalize({...mixed,results:[{...mixed.results[0],price_allowance_cents:1}]}, 'other-allowance.json'), /no results using the saved Robinhood/);
 assert.throws(() => normalize({...mixed,results:[{...mixed.results[0],fee_per_contract_cents:undefined}]}, 'unknown-fee.json'), /no results using the saved Robinhood/);
+const feeModel = {id: 'robinhood-us-retail-2026-v1', source: 'dated retail fees'};
+const dated = {...study, schema: 'AutoWheelAvailablePresetVerifiedV1', fee_model: feeModel, results: [{...study.results[0], fee_per_contract_cents: undefined, fee_model: feeModel}]};
+const trimmedDated = trimReport(dated);
+assert.deepEqual(trimmedDated.fee_model, feeModel);
+assert.deepEqual(trimmedDated.results[0].fee_model, feeModel);
+const datedHTML = attachHTML('<script id="attached-reports" type="application/json">[]</script>', [{name: 'Dated fees', report: trimmedDated}]);
+const datedRoundTrip = attachedReports(datedHTML.match(/application\/json">([\s\S]*)<\/script>/)[1])[0];
+assert.equal(datedRoundTrip.feeModel, feeModel.id);
+assert.equal(datedRoundTrip.scenarios[0].curve.at(-1).equity, dated.results[0].ending_equity_cents);
 console.log('Calendar checks passed: weekly attribution, exact cents, Eastern dates, coverage, missing marks and blocked performance.');

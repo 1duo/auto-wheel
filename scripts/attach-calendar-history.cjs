@@ -9,7 +9,7 @@ function pick(object, keys) {
 }
 function trimReport(report) {
   report = calendar.robinhoodOnly(report);
-  const out = pick(report, ['schema_version', 'schema', 'status', 'blockers', 'assumptions', 'start', 'end', 'window', 'symbol', 'initial_cash_cents', 'starting_cash_cents', 'max_collateral_cents', 'limitations', 'valuation_policy', 'expiry_policy', 'ranking_policy', 'universe_selection_bias', 'input_sha256', 'strategy_sha256', 'simulation_engine_sha256', 'expected_decisions', 'observed_decisions', 'expected_valuations', 'observed_valuations', 'performance']);
+  const out = pick(report, ['schema_version', 'schema', 'status', 'blockers', 'assumptions', 'start', 'end', 'window', 'symbol', 'initial_cash_cents', 'starting_cash_cents', 'max_collateral_cents', 'fee_model', 'limitations', 'valuation_policy', 'expiry_policy', 'ranking_policy', 'universe_selection_bias', 'input_sha256', 'strategy_sha256', 'simulation_engine_sha256', 'expected_decisions', 'observed_decisions', 'expected_valuations', 'observed_valuations', 'performance']);
   const curve = rows => rows?.map(point => {
     const value = pick(point, ['at', 'date', 'equity_cents', 'economic_cash_cents', 'cash_cents', 'stock_value_cents', 'option_liability_cents', 'dividend_receivable_cents']);
     if (Array.isArray(point.positions)) value.positions = point.positions.map(position => pick(position, ['stock_value_cents', 'option_liability_cents']));
@@ -23,7 +23,7 @@ function trimReport(report) {
   if (report.equity_curve) out.equity_curve = curve(report.equity_curve);
   if (report.trades) out.trades = trades(report.trades);
   if (report.results) out.results = report.results.map(result => {
-    const value = pick(result, ['mode', 'strategy', 'fee_per_contract_cents', 'price_allowance_cents', 'starting_cash_cents', 'accounting_reconciled', 'cash_ledger_reconciled', 'endpoint_complete', 'endpoint_pnl_reconciled', 'pnl_reconciled', 'daily_valuation_complete', 'net_pnl_cents', 'ending_equity_cents']);
+    const value = pick(result, ['mode', 'strategy', 'fee_model', 'fee_per_contract_cents', 'price_allowance_cents', 'starting_cash_cents', 'accounting_reconciled', 'cash_ledger_reconciled', 'endpoint_complete', 'endpoint_pnl_reconciled', 'pnl_reconciled', 'daily_valuation_complete', 'net_pnl_cents', 'ending_equity_cents']);
     if (result.profile) value.profile = pick(result.profile, ['id']);
     value.daily_equity = curve(result.daily_equity);
     value.trade_ledger = trades(result.trade_ledger);

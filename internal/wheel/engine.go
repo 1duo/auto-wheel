@@ -28,6 +28,31 @@ func Reconcile(st *State, s Snapshot, now time.Time) error {
 	if st.Account != s.Account {
 		return errors.New("journal belongs to another account")
 	}
+	// Validate exposure before consuming any intent or changing ownership. An ID
+	// match cannot prove a contract whose broker metadata changed or duplicated.
+	seen := map[string]bool{}
+	for _, op := range s.Options {
+		p, in := st.Positions[op.Symbol], st.Intents[op.Symbol]
+		valid := op.ID != "" && op.Quantity == 1 && !seen[op.Symbol] && op.Strike > 0 && op.Strike <= MaxMoney/100
+		if _, err := time.Parse("2006-01-02", op.Expiry); err != nil {
+			valid = false
+		}
+		switch {
+		case op.ID == in.Candidate.ID && in.Candidate.ID != "":
+			q := in.Candidate.Option
+			valid = valid && op.Symbol == q.Symbol && op.Kind == q.Kind && op.Strike == q.Strike && op.Expiry == q.Expiry && (q.ChainID == "" || op.ChainID == q.ChainID)
+		case op.ID == p.PutID && p.PutID != "":
+			valid = valid && op.Kind == "put" && op.Strike == p.PutStrike && (p.PutExpiry == "" || op.Expiry == p.PutExpiry)
+		case op.ID == p.CallID && p.CallID != "":
+			valid = valid && op.Kind == "call" && p.OwnedShares == 100 && (p.CallExpiry == "" || op.Expiry == p.CallExpiry)
+		default:
+			valid = false
+		}
+		if !valid {
+			return fmt.Errorf("%s option exposure identity or quantity unproven; operator review required", op.Symbol)
+		}
+		seen[op.Symbol] = true
+	}
 	for symbol, in := range st.Intents {
 		var matches []Order
 		for _, o := range s.Orders {
@@ -76,12 +101,6 @@ func Reconcile(st *State, s Snapshot, now time.Time) error {
 			st.CompletedOrders[o.ID] = OrderRecord{Ref: in.Ref, Symbol: symbol, OptionID: in.Candidate.ID, At: in.At}
 		}
 		delete(st.Intents, symbol)
-	}
-	for _, op := range s.Options {
-		p, in := st.Positions[op.Symbol], st.Intents[op.Symbol]
-		if op.Quantity != 1 || (op.ID != p.PutID && op.ID != p.CallID && op.ID != in.Candidate.ID) {
-			return fmt.Errorf("%s untracked option exposure; operator review required", op.Symbol)
-		}
 	}
 	for _, o := range s.Orders {
 		if o.Terminal() || o.OptionID == "" {

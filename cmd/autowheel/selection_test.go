@@ -28,6 +28,7 @@ func TestSelectionControlPausesAndRequiresRestart(t *testing.T) {
 	request := func(path string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:9841/control/"+path, nil)
 		r.Header.Set("X-AutoWheel-Control", "confirm")
+		authorizeOperatorRequest(t, r, dir)
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, r)
 		return w
@@ -86,6 +87,7 @@ func TestSelectionControlBoundaryAndSubmissionLock(t *testing.T) {
 		r.Host = tc.host
 		r.Header.Set("Origin", tc.origin)
 		r.Header.Set("X-AutoWheel-Control", tc.header)
+		authorizeOperatorRequest(t, r, dir)
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, r)
 		if w.Code != tc.want {
@@ -99,6 +101,7 @@ func TestSelectionControlBoundaryAndSubmissionLock(t *testing.T) {
 		close(started)
 		r := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:9841/control/selection/balanced", nil)
 		r.Header.Set("X-AutoWheel-Control", "confirm")
+		authorizeOperatorRequest(t, r, dir)
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, r)
 		done <- w.Code

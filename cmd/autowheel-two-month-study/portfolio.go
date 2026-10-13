@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"time"
 
 	"autowheel/internal/wheel"
@@ -106,6 +107,10 @@ func portfolioAdmissions(all []portfolioCandidate, accounts map[string]*account,
 }
 
 func portfolioAdmissionsWithFees(all []portfolioCandidate, accounts map[string]*account, cash, ceiling int64) []portfolioCandidate {
+	return portfolioAdmissionsWithLimits(all, accounts, cash, ceiling, 0)
+}
+
+func portfolioAdmissionsWithLimits(all []portfolioCandidate, accounts map[string]*account, cash, ceiling, symbolLimit int64) []portfolioCandidate {
 	active, committed, reserve := portfolioTotals(accounts)
 	available, budget := cash-reserve, ceiling-committed
 	selected, seen := []portfolioCandidate{}, map[string]bool{}
@@ -120,6 +125,9 @@ func portfolioAdmissionsWithFees(all []portfolioCandidate, accounts map[string]*
 		}
 		if c.Quote.Kind == "put" {
 			collateral := c.Quote.Strike * 100
+			if symbolLimit > 0 && !wheel.FitsSymbolCollateral(wheel.Cents(collateral), wheel.Cents(fee), wheel.Cents(symbolLimit)) {
+				continue
+			}
 			if a.Shares != 0 || active >= 3 || collateral+fee > available || collateral+fee > budget {
 				continue
 			}
@@ -203,6 +211,15 @@ func portfolioCandidatesWithFees(in input, index int, a *account, base profile, 
 }
 
 func portfolioDividendCents(f portfolioDividend, shares int) (int64, error) {
+	for _, date := range []string{f.ExDate, f.PayDate} {
+		if _, err := time.Parse("2006-01-02", date); err != nil {
+			return 0, errors.New("invalid dividend date")
+		}
+	}
+	whole, fraction, _ := strings.Cut(f.Amount, ".")
+	if whole == "" || len(f.Amount) > 40 || len(fraction) > 12 || strings.Trim(whole+fraction, "0123456789") != "" {
+		return 0, errors.New("dividend must be an exact plain decimal")
+	}
 	r, ok := new(big.Rat).SetString(f.Amount)
 	if !ok || r.Sign() < 0 || (shares != 0 && shares != 100) || f.PayDate < f.ExDate {
 		return 0, errors.New("invalid dividend")
@@ -223,6 +240,13 @@ func simulatePortfolioWithActions(inputs []input, base profile, seed, fee, allow
 }
 
 func simulatePortfolioUsingFees(inputs []input, base profile, seed int64, feeSchedule portfolioFeeSchedule, allowance, ceiling int64, facts []portfolioDividend, supplements map[string]int64, actions []historicalAction) (map[string]any, error) {
+	return simulatePortfolioUsingLimits(inputs, base, seed, feeSchedule, allowance, ceiling, facts, supplements, actions, 0)
+}
+
+func simulatePortfolioUsingLimits(inputs []input, base profile, seed int64, feeSchedule portfolioFeeSchedule, allowance, ceiling int64, facts []portfolioDividend, supplements map[string]int64, actions []historicalAction, symbolLimit int64) (map[string]any, error) {
+	if symbolLimit < 0 || symbolLimit > ceiling {
+		return nil, errors.New("invalid per-symbol research collateral limit")
+	}
 	fee := feeSchedule.Fixed
 	if seed <= 0 || seed > 100_000_000 || ceiling <= 0 || ceiling > 15_000_000 || fee < 0 || fee > 200 || allowance < 0 || allowance > 1 || len(inputs) == 0 {
 		return nil, errors.New("invalid portfolio scope or money bounds")
@@ -242,6 +266,16 @@ func simulatePortfolioUsingFees(inputs []input, base profile, seed int64, feeSch
 	accounts := map[string]*account{}
 	for _, in := range inputs {
 		accounts[in.Symbol] = &account{}
+	}
+	dividendIDs := map[string]bool{}
+	for _, f := range facts {
+		if f.ID == "" || dividendIDs[f.ID] || accounts[f.Symbol] == nil {
+			return nil, errors.New("invalid or duplicate dividend identity")
+		}
+		if _, err := portfolioDividendCents(f, 100); err != nil {
+			return nil, err
+		}
+		dividendIDs[f.ID] = true
 	}
 	cash, income, paid := seed, int64(0), int64(0)
 	entitlements := []map[string]any{}
@@ -279,7 +313,7 @@ func simulatePortfolioUsingFees(inputs []input, base profile, seed int64, feeSch
 			all = append(all, portfolioCandidatesWithFees(in, index, accounts[in.Symbol], base, feeSchedule, allowance)...)
 		}
 		slices.SortFunc(all, portfolioROICompare)
-		selected := portfolioAdmissionsWithFees(all, accounts, cash, ceiling)
+		selected := portfolioAdmissionsWithLimits(all, accounts, cash, ceiling, symbolLimit)
 		for rank, c := range selected {
 			in := inputs[slices.IndexFunc(inputs, func(in input) bool { return in.Symbol == c.Symbol })]
 			o, filled := modelOrder(in.Days[index], c.Quote, allowance)
@@ -389,6 +423,7 @@ func simulatePortfolioUsingFees(inputs []input, base profile, seed int64, feeSch
 	if base.ID == "baseline" {
 		r["strategy"] = string(base.Mode)
 	}
+	r["max_symbol_collateral_cents"] = symbolLimit
 	if feeSchedule.Robinhood {
 		delete(r, "fee_per_contract_cents")
 		r["fee_model"] = robinhoodFeeDisclosure()
@@ -416,6 +451,15 @@ func runPortfolioScope(root, output string, seed, ceiling int64, availablePreset
 }
 
 func runPortfolioUniverse(root, output string, seed, ceiling int64, availablePresets bool, first, last, symbolList, presetID string) error {
+	return runPortfolioUniverseWithPolicy(root, output, seed, ceiling, availablePresets, first, last, symbolList, presetID, portfolioStudyPolicy{})
+}
+
+type portfolioStudyPolicy struct {
+	LimitSymbolCollateral bool
+	IncludeAdaptive       bool
+}
+
+func runPortfolioUniverseWithPolicy(root, output string, seed, ceiling int64, availablePresets bool, first, last, symbolList, presetID string, policy portfolioStudyPolicy) error {
 	if !availablePresets && (symbolList != "" || presetID != "") {
 		return errors.New("custom research universe and preset require available-presets")
 	}
@@ -426,6 +470,11 @@ func runPortfolioUniverse(root, output string, seed, ceiling int64, availablePre
 	profiles := []profile{}
 	if availablePresets {
 		profiles = calendarYearProfiles()
+		if policy.IncludeAdaptive {
+			p := baseline(wheel.SelectionBalanced)
+			p.ID = "cycle-adaptive-v1"
+			profiles = append(profiles, p)
+		}
 		if presetID != "" {
 			profiles = slices.DeleteFunc(profiles, func(p profile) bool { return p.ID != presetID })
 			if len(profiles) != 1 {
@@ -482,27 +531,29 @@ func runPortfolioUniverse(root, output string, seed, ceiling int64, availablePre
 		return !slices.Contains(symbols, f.Symbol)
 	})
 	var recovered struct {
-		Observations []struct {
-			Date     string `json:"date"`
-			Contract string `json:"contract"`
-			Ask      int64  `json:"ask_cents"`
-			Path     string `json:"response_path"`
-			SHA      string `json:"response_sha256"`
-		} `json:"observations"`
+		Observations []eodObservation `json:"observations"`
 	}
 	if err := read(filepath.Join(root, "valuation-completion-v1", "eod-observations.json"), &recovered); err != nil {
 		return err
 	}
 	supplements := map[string]int64{}
 	for _, o := range recovered.Observations {
-		var response any
+		var response json.RawMessage
 		if err := read(o.Path, &response); err != nil {
 			return err
 		}
-		if pins[o.Path] != o.SHA || !validMoney(o.Ask) {
+		if pins[o.Path] != o.SHA {
 			return errors.New("invalid EOD supplement pin")
 		}
-		supplements[o.Date+"/"+o.Contract] = o.Ask
+		ask, err := validateEODSupplement(o, response)
+		if err != nil {
+			return err
+		}
+		key := o.Date + "/" + o.Contract
+		if _, exists := supplements[key]; exists {
+			return errors.New("duplicate EOD supplement")
+		}
+		supplements[key] = ask
 	}
 	if first != "" || last != "" {
 		var err error
@@ -512,8 +563,15 @@ func runPortfolioUniverse(root, output string, seed, ceiling int64, availablePre
 		}
 	}
 	results := []map[string]any{}
+	symbolLimit := int64(0)
+	if policy.LimitSymbolCollateral {
+		symbolLimit = int64((wheel.Config{MaxCollateral: wheel.Cents(ceiling), MaxSymbols: 3}).SymbolCollateralLimit())
+		if symbolLimit <= 0 {
+			return errors.New("invalid derived per-symbol research collateral limit")
+		}
+	}
 	for _, p := range profiles {
-		r, err := simulatePortfolioUsingFees(inputs, p, seed, portfolioFeeSchedule{Robinhood: true}, 0, ceiling, dividends.Facts, supplements, nil)
+		r, err := simulatePortfolioUsingLimits(inputs, p, seed, portfolioFeeSchedule{Robinhood: true}, 0, ceiling, dividends.Facts, supplements, nil, symbolLimit)
 		if err != nil {
 			return err
 		}
@@ -530,6 +588,12 @@ func runPortfolioUniverse(root, output string, seed, ceiling int64, availablePre
 	digest := sha256.Sum256(b)
 	report := map[string]any{"schema": "AutoWheelSharedPortfolioEndpointStudyV1", "start": inputs[0].Start, "end": inputs[0].End, "symbols": portfolioSymbols, "starting_cash_cents": seed, "max_managed_symbols": 3, "max_contracts_per_symbol": 1, "max_collateral_cents": ceiling, "source_sha256": pins, "executable_sha256": hex.EncodeToString(digest[:]), "results": results, "production_qualified": false, "ranking_policy": "All eligible nearest-expiry contracts ranked by net quoted ROI per day, then symbol and contract. Put denominator: strike collateral. Call numerator: signed time value less fee; denominator: decision stock midpoint. Original delta bands retained; delta-first ordering overridden in this offline study. Admissions frozen before observing executions; unfilled selections are not replaced.", "valuation_policy": "Owned stock: official unadjusted close, aggregate position value floored to cents. Native stock bid sensitivity retained. Fresh native option asks preferred; hash-pinned EOD supplements only for missing marks. Supplement publication clocks do not meet strict 4pm freshness. Missing marks remain null.", "limitations": []string{"Weekly decisions only; 194 sessions, 40 entry dates. Bounded strikes, not complete chains.", "European modeled Greeks; fixed 4% pricing rate and zero dividend yield; open-interest filtering omitted.", "Expiry-only exercise at one cent ITM, no early exercise or settlement delay. Observed ordinary dividends accrue at ex-date and pay on payment date.", "Contemporary universe selected from July-September outcomes; retrospective, not blind out-of-sample.", "Robinhood dated retail fees only; call-away proceeds use stock-sale regulatory rules as a model inference. No cash interest, taxes, optional subscriptions or service charges. Not broker invoices."}}
 	report["fee_model"] = robinhoodFeeDisclosure()
+	report["max_symbol_collateral_cents"] = symbolLimit
+	report["symbol_collateral_policy"] = "Explicit historical counterfactual: per-symbol admission limit disabled."
+	if policy.LimitSymbolCollateral {
+		report["symbol_collateral_policy"] = "Fixed account ceiling divided by three managed slots, floored to cents. New put collateral plus entry fee must fit. Existing stock is never forcibly liquidated."
+	}
+	report["adaptive_research_included"] = policy.IncludeAdaptive
 	if availablePresets {
 		report["schema"] = "AutoWheelAvailablePresetEndpointStudyV1"
 		report["symbols"] = symbols

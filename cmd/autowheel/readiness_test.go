@@ -93,6 +93,7 @@ func TestLiveActivationPersistenceAndGuards(t *testing.T) {
 	request := func(action string) int {
 		r := httptest.NewRequest("POST", "http://127.0.0.1:9841/control/"+action, nil)
 		r.Header.Set("X-AutoWheel-Control", "confirm")
+		authorizeOperatorRequest(t, r, dir)
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, r)
 		return w.Code

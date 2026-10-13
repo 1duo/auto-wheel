@@ -97,7 +97,7 @@ func run() error {
 		if _, err := os.Lstat(*config); !errors.Is(err, os.ErrNotExist) {
 			return errors.New("init requires a new configuration path")
 		}
-		initial, err := wheel.DefaultConfig().WithSelectionMode(wheel.SelectionConservative)
+		initial, err := wheel.DefaultConfig().WithStrategyPreset("conservative-roi-v1")
 		if err != nil {
 			return err
 		}
@@ -486,6 +486,9 @@ func run() error {
 	if err != nil || (host != "127.0.0.1" && host != "::1") {
 		return errors.New("status server must listen on loopback")
 	}
+	if err := ensureOperatorToken(*stateDir); err != nil {
+		return errors.New("private operator credential could not be provisioned")
+	}
 	listener, err := net.Listen("tcp", *listen)
 	if err != nil {
 		return err
@@ -532,11 +535,15 @@ func run() error {
 
 func loadConfig(path string) (wheel.Config, error) {
 	c := wheel.DefaultConfig()
-	f, err := os.Open(path)
+	f, err := aruntime.PrivateRead(path)
 	if err != nil {
 		return c, err
 	}
 	defer f.Close()
+	info, err := f.Stat()
+	if err != nil || info.Size() > 65536 {
+		return c, errors.New("configuration exceeds size limit or cannot be inspected")
+	}
 	d := json.NewDecoder(io.LimitReader(f, 65536))
 	d.DisallowUnknownFields()
 	if err = d.Decode(&c); err != nil {

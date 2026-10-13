@@ -61,6 +61,29 @@ func TestPortfolioHigherCeilingDoesNotCreateCash(t *testing.T) {
 	}
 }
 
+func TestPortfolioSymbolLimitMatchesNativeFeeAndPreservesOwnedExit(t *testing.T) {
+	accounts := map[string]*account{"A": {}, "B": {}, "C": {Shares: 100, Basis: 40000}}
+	all := []portfolioCandidate{
+		{Symbol: "A", Quote: quote{Kind: "put", Strike: 27000}, Fee: 6},
+		{Symbol: "A", Quote: quote{Kind: "put", Strike: 26000}, Fee: 6},
+		{Symbol: "B", Quote: quote{Kind: "put", Strike: 20000}, Fee: 6},
+		{Symbol: "C", Quote: quote{Kind: "call", Strike: 35000}, Fee: 6},
+	}
+	limit := int64(wheel.DefaultConfig().SymbolCollateralLimit())
+	got := portfolioAdmissionsWithLimits(all, accounts, 8_000_000, 8_000_000, limit)
+	if len(got) != 2 || got[0].Quote.Strike != 26000 || got[1].Quote.Kind != "call" {
+		t.Fatal("symbol cap or aggregate budget bypassed, or owned exit blocked", got)
+	}
+	accounts["C"].Shares = 0
+	got = portfolioAdmissionsWithLimits(all[:2], accounts, 8_000_000, 8_000_000, 2_600_006)
+	if len(got) != 1 || got[0].Quote.Strike != 26000 {
+		t.Fatal("exact symbol fee boundary rejected")
+	}
+	if got := portfolioAdmissionsWithLimits(all[:2], accounts, 8_000_000, 8_000_000, 2_600_005); len(got) != 0 {
+		t.Fatal("entry fee bypassed symbol budget")
+	}
+}
+
 func TestPortfolioSelectionIgnoresExecutionAndFutureData(t *testing.T) {
 	in := fixture()
 	p := baseline(wheel.SelectionConservative)

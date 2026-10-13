@@ -361,12 +361,17 @@ func run() error {
 	studyEnd := flag.String("study-end", "", "last finished session for an independent available-presets replay")
 	studySymbols := flag.String("study-symbols", "", "comma-separated frozen 2026 research symbols; requires available-presets")
 	studyPreset := flag.String("study-preset", "", "one frozen research preset; requires available-presets")
+	limitSymbolCollateral := flag.Bool("limit-symbol-collateral", false, "apply the native fixed account ceiling / three per-symbol admission limit; shared 2026 endpoint only")
+	includeAdaptive := flag.Bool("include-adaptive", false, "include the research-only adaptive comparison; requires available-presets")
 	calendarYear := flag.Int("calendar-year", 0, "2024 or 2025 shared portfolio with frozen research presets")
 	frozenSelection := flag.String("frozen-selection", "", "2024-only frozen selection required for the 2025 evaluation")
 	planOnly := flag.Bool("plan-only", false, "write the frozen calendar-year schedule and strategy plan without reading market data")
 	seed := flag.Int64("starting-cash-cents", 0, "observed cash seed for shared portfolio")
 	ceiling := flag.Int64("max-collateral-cents", 15_000_000, "shared portfolio exposure ceiling; puts remain cash-secured")
 	flag.Parse()
+	if (*limitSymbolCollateral && (!*portfolio || *calendarYear != 0 || *planOnly || *endpoint)) || (*includeAdaptive && !*availablePresets) {
+		return errors.New("symbol limit requires the shared 2026 endpoint path; adaptive comparison requires available-presets")
+	}
 	if (*availablePresets && (!*portfolio || *calendarYear != 0 || *planOnly || *endpoint || *frozenSelection != "")) || (!*availablePresets && (*studyStart != "" || *studyEnd != "" || *studySymbols != "" || *studyPreset != "")) {
 		return errors.New("available-presets requires the finished shared-portfolio endpoint path; period bounds require available-presets")
 	}
@@ -384,9 +389,9 @@ func run() error {
 			return runCalendarYearPortfolio(*path, *output, *seed, *ceiling, *calendarYear, *frozenSelection)
 		}
 		if *availablePresets {
-			return runPortfolioUniverse(*path, *output, *seed, *ceiling, true, *studyStart, *studyEnd, *studySymbols, *studyPreset)
+			return runPortfolioUniverseWithPolicy(*path, *output, *seed, *ceiling, true, *studyStart, *studyEnd, *studySymbols, *studyPreset, portfolioStudyPolicy{LimitSymbolCollateral: *limitSymbolCollateral, IncludeAdaptive: *includeAdaptive})
 		}
-		return runPortfolio(*path, *output, *seed, *ceiling)
+		return runPortfolioUniverseWithPolicy(*path, *output, *seed, *ceiling, false, "", "", "", "", portfolioStudyPolicy{LimitSymbolCollateral: *limitSymbolCollateral})
 	}
 	if *calendarYear != 0 {
 		return errors.New("calendar-year requires shared-portfolio")

@@ -118,6 +118,9 @@ func selectCandidate(c Config, symbol, kind string, quotes []Quote, cost Cents, 
 		if kind == "put" && (q.Delta >= 0 || delta < c.PutMinDelta || delta > c.PutMaxDelta || q.Strike >= q.Spot) {
 			continue
 		}
+		if kind == "put" && !FitsSymbolCollateral(q.Strike*100, c.Fee, c.SymbolCollateralLimit()) {
+			continue
+		}
 		if kind == "call" && (q.Delta <= 0 || delta < c.CallMinDelta || delta > c.CallMaxDelta || (!c.AllowBelowCost && q.Strike < cost)) {
 			continue
 		}
@@ -322,6 +325,9 @@ func Plan(c Config, st State, s Snapshot, candidates []Candidate, now time.Time)
 				continue
 			}
 		} else if a.Kind == "put" {
+			if !FitsSymbolCollateral(a.Collateral, c.Fee, c.SymbolCollateralLimit()) {
+				continue
+			}
 			if active[a.Symbol] || shares[a.Symbol].Quantity != 0 || len(active) >= c.MaxSymbols || a.Collateral+c.Fee > budget || a.Collateral+c.Fee > cash {
 				continue
 			}

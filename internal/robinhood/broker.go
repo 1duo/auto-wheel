@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"math/big"
 	"net/url"
 	"slices"
@@ -570,7 +571,7 @@ func (b *Broker) Quotes(ctx context.Context, symbol, kind string) ([]wheel.Quote
 		return nil, err
 	}
 	if len(contracts) == 0 {
-		return nil, nil
+		return nil, errors.New("listed nearest expiry has no contract data")
 	}
 	if err := b.verifyDeliverable(ctx, chain, nearest, contracts, kind); err != nil {
 		return nil, err
@@ -620,7 +621,10 @@ func (b *Broker) Quotes(ctx context.Context, symbol, kind string) ([]wheel.Quote
 			seen[id] = true
 			op, err := instrument(meta, id)
 			if err != nil {
-				continue
+				return nil, errors.New("invalid nearest-expiry option instrument")
+			}
+			if op.Strike <= 0 || op.Strike > wheel.MaxMoney/100 {
+				return nil, errors.New("nearest-expiry option strike out of range")
 			}
 			if op.Symbol != symbol || op.Kind != kind || op.Expiry != nearest || text(meta, "chain_id") != text(chain, "id") || text(meta, "underlying_type") != "equity" {
 				return nil, errors.New("contract identity differs from chain request")
@@ -628,44 +632,47 @@ func (b *Broker) Quotes(ctx context.Context, symbol, kind string) ([]wheel.Quote
 			q := wheel.Quote{Option: op, Spot: spot, UnderlyingAt: stockAt, Standard: true, Tradable: text(meta, "tradability") == "tradable" && text(meta, "state") == "active", Weekly: text(meta, "expiration_type") == "weekly"}
 			q.At, err = timestamp(p, "updated_at")
 			if err != nil {
-				continue
+				return nil, err
 			}
 			q.Bid, err = money(p, "bid_price")
 			if err != nil {
-				continue
+				return nil, err
 			}
 			q.Ask, err = money(p, "ask_price")
 			if err != nil {
-				continue
+				return nil, err
+			}
+			if q.Ask < q.Bid || q.Ask > wheel.MaxMoney/100 {
+				return nil, errors.New("invalid nearest-expiry option book")
 			}
 			q.Delta, err = strconv.ParseFloat(text(p, "delta"), 64)
-			if err != nil {
-				continue
+			if err != nil || math.IsNaN(q.Delta) || math.IsInf(q.Delta, 0) || math.Abs(q.Delta) > 1 || (kind == "put" && q.Delta > 0) || (kind == "call" && q.Delta < 0) {
+				return nil, errors.New("invalid nearest-expiry option delta")
 			}
 			q.OI, err = integer(p, "open_interest")
 			if err != nil {
-				continue
+				return nil, err
 			}
 			q.BidSize, err = integer(p, "bid_size")
 			if err != nil {
-				continue
+				return nil, err
 			}
 			// Contract tick rules are authoritative. Unknown ticks cannot trade.
 			ticks, ok := meta["min_ticks"].(object)
 			if !ok {
-				continue
+				return nil, errors.New("nearest-expiry option ticks missing")
 			}
 			cut, err := money(ticks, "cutoff_price")
 			if err != nil {
-				continue
+				return nil, err
 			}
 			key := "below_tick"
 			if q.Bid >= cut {
 				key = "above_tick"
 			}
 			q.Tick, err = money(ticks, key)
-			if err != nil {
-				continue
+			if err != nil || q.Tick <= 0 {
+				return nil, errors.New("invalid nearest-expiry option tick")
 			}
 			out = append(out, q)
 		}

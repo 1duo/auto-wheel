@@ -28,5 +28,6 @@
   "max_dte_days": 8,
   "poll_seconds": 300,
   "symbol_limit_scope": "managed",
-  "selection_mode": "conservative"
+  "selection_mode": "conservative",
+  "strategy_preset": "conservative-roi-v1"
 }

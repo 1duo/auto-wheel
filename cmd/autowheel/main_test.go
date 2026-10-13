@@ -20,7 +20,7 @@ func TestInitConservativeAndPrivate(t *testing.T) {
 		t.Fatal(err)
 	}
 	c, err := loadConfig(path)
-	if err != nil || c.SelectionMode != wheel.SelectionConservative || c.PutMinDelta != .05 || c.PutMaxDelta != .15 || c.Account != "" {
+	if err != nil || c.SelectionMode != wheel.SelectionConservative || c.StrategyPreset != "conservative-roi-v1" || c.PutMinDelta != .05 || c.PutMaxDelta != .15 || c.SymbolCollateralLimit() != 2_666_666 || c.Account != "" {
 		t.Fatalf("unsafe initial configuration: %+v, %v", c, err)
 	}
 	info, err := os.Stat(path)

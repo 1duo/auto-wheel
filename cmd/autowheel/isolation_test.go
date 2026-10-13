@@ -110,6 +110,7 @@ func TestTradePulseConflictFencesActivation(t *testing.T) {
 	handler := operatorAPI(func() status { return s }, "read_only", a.Dir, make(chan struct{}, 1), operatorFeatures{Activation: a, SubmitMu: &mu})
 	r := httptest.NewRequest("POST", "http://127.0.0.1:9841/control/live", nil)
 	r.Header.Set("X-AutoWheel-Control", "confirm")
+	authorizeOperatorRequest(t, r, a.Dir)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, r)
 	if w.Code != http.StatusConflict {

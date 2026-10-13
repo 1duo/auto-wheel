@@ -30,6 +30,11 @@ func OpenJournal(dir string) (*Journal, wheel.State, error) {
 		return nil, wheel.State{}, err
 	}
 	lock := os.NewFile(uintptr(fd), "lock")
+	info, err = lock.Stat()
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 {
+		lock.Close()
+		return nil, wheel.State{}, errors.New("journal lock must be a private regular file")
+	}
 	if err = syscall.Flock(fd, syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		lock.Close()
 		return nil, wheel.State{}, errors.New("another AutoWheel process owns this state directory")
@@ -72,7 +77,9 @@ func (j *Journal) Save(st wheel.State) error {
 func (j *Journal) Close() error { return j.lock.Close() }
 
 func PrivateRead(path string) (*os.File, error) {
-	fd, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	// Nonblocking open lets the regular-file check reject FIFOs without waiting
+	// for a writer. It does not change reads from accepted regular files.
+	fd, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return nil, err
 	}

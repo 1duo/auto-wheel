@@ -51,6 +51,9 @@ func TestConfigCheckHasNoTradingOrHandoffEffects(t *testing.T) {
 	if !report.ConfigurationValid || report.Scope != "configuration_only" || report.BrokerVerified || report.TradingAuthorized || report.ConfigDigest != configDigest(c) || report.AccountLast4 != "5678" || report.Config.Account != "" || strings.Contains(string(raw), c.Account) {
 		t.Fatal("configuration-only evidence was incorrect or disclosed the account")
 	}
+	if report.SymbolCollateral != 2_666_666 {
+		t.Fatal("configuration inspection omitted or changed the fixed symbol limit")
+	}
 	for _, flag := range []string{"--live", "--live-capable", "--exclusive-account"} {
 		os.Args = append(slices.Clone(baseArgs), flag)
 		if err := run(); err == nil {
@@ -72,5 +75,32 @@ func TestConfigCheckHasNoTradingOrHandoffEffects(t *testing.T) {
 	}
 	if after, err := output.Stat(); err != nil || after.Size() != int64(len(raw)) {
 		t.Fatal("failed checks emitted success evidence", err)
+	}
+}
+
+func TestConfigRequiresPrivateRegularFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	if err := aruntime.AtomicJSON(path, wheel.DefaultConfig()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadConfig(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadConfig(path); err == nil {
+		t.Fatal("public configuration accepted")
+	}
+	if err := os.Chmod(path, 0600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "link.json")
+	if err := os.Symlink(path, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadConfig(link); err == nil {
+		t.Fatal("configuration symlink accepted")
 	}
 }

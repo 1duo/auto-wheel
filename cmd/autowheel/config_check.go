@@ -16,6 +16,7 @@ type configCheckReport struct {
 	AccountLast4       string       `json:"account_last4,omitempty"`
 	BrokerVerified     bool         `json:"broker_verified"`
 	TradingAuthorized  bool         `json:"trading_authorized"`
+	SymbolCollateral   wheel.Cents  `json:"max_symbol_collateral_cents"`
 	Config             wheel.Config `json:"config"`
 }
 
@@ -28,6 +29,7 @@ func writeConfigCheck(out io.Writer, c wheel.Config) error {
 	r := configCheckReport{
 		Version: version, Scope: "configuration_only", ConfigurationValid: true,
 		ConfigDigest: configDigest(c), AccountConfigured: c.Account != "", Config: c,
+		SymbolCollateral: c.SymbolCollateralLimit(),
 	}
 	if c.Account != "" {
 		r.AccountLast4 = c.Account[max(0, len(c.Account)-4):]
