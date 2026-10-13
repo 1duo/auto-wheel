@@ -44,8 +44,8 @@
 <p>After owned shares disappear and no open option or order remains, wait at least 24 hours before releasing the slot and considering a new put. If a covered call expires while the 100 shares remain available, the next eligible call can be selected. These conservative holds can delay capital reuse.</p>
 <div class="card warning"><h3>Below-cost calls can deliberately realize losses</h3><p>Illustration, not current quotes: a $200 put sold at $2 with 4 days left requires $20,000 collateral and nets $199 after the fee estimate: 0.995% over 4 days, or 0.24875% per day. If assigned at $200, selling a $195 call at $2 yields <code>($195 − $200) × 100 + $199 = −$301</code> if called away. Including only that prior put premium makes the two-premium example −$102; taxes and any other transactions are excluded.</p><p>High delta and short expiry favor faster call-away; neither guarantees it. A stock decline can exceed all premiums. This strategy is not loss capped, and it does not optimize lifetime wheel profit.</p></div>
 <h2>Universe</h2>
-<p>NVDA · IREN · NOW · AMD · AMZN · GOOGL · META · MSFT · PLTR · AVGO</p>
-<p class="muted">The default universe reflects retrospective research selection. Simulated returns do not establish broker performance.</p>
+<p>NVDA · IREN · AMD · AMZN · GOOGL · AVGO · NBIS · COIN · MSTR · HOOD</p>
+<p class="muted">The default universe reflects retrospective research selection. See <a href="universe.md">selection method and limits</a>. Simulated returns do not establish broker performance.</p>
 <p class="muted">This is the configured scan universe, not a claim that every ticker currently has an eligible liquid contract. Each broker scan determines eligibility.</p>
 <h2>Using the menubar</h2>
 <ul>
