@@ -123,11 +123,16 @@
   }
   const studySchemas = new Set([
     "AutoWheelTwoMonthStudyV1", "AutoWheelTwoMonthEndpointStudyV1", "AutoWheelThreeMonthEndpointStudyV1", "AutoWheelYearToDateEndpointStudyV1",
-    "AutoWheelSharedPortfolioEndpointStudyV1", "AutoWheelSharedPortfolioVerifiedV1", "AutoWheelFairSecuredCostStudyV2", "AutoWheelRobinhoodSingleFeeStudyV1", "AutoWheelEODSupplementedAccountingV1"
+    "AutoWheelSharedPortfolioEndpointStudyV1", "AutoWheelSharedPortfolioVerifiedV1", "AutoWheelFairSecuredCostStudyV2", "AutoWheelRobinhoodSingleFeeStudyV1", "AutoWheelEODSupplementedAccountingV1",
+    "AutoWheelAvailablePresetEndpointStudyV1", "AutoWheelAvailablePresetVerifiedV1"
   ]);
   const robinhoodFeeEstimate = Object.freeze({feeCents: 6, priceAllowanceCents: 0});
   function robinhoodOnly(report) {
     if (!report || !Array.isArray(report.results)) return report;
+    if (report.fee_model?.id === "robinhood-us-retail-2026-v1") {
+      if (report.results.some(result => result.fee_model?.id !== report.fee_model.id || result.fee_per_contract_cents !== undefined || result.price_allowance_cents !== 0)) throw new Error("Robinhood report mixes dated fees with flat costs or price allowances.");
+      return report;
+    }
     const results = report.results.filter(result => result.fee_per_contract_cents === robinhoodFeeEstimate.feeCents && result.price_allowance_cents === robinhoodFeeEstimate.priceAllowanceCents);
     if (!results.length) throw new Error("This report has no results using the saved Robinhood fee estimate ($0.06 per filled option contract, no price allowance).");
     const clean = values => textList(values).map(text => text.replace("; $2 plus one-cent allowance is a separate cost/path sensitivity.", "."));
@@ -183,7 +188,7 @@
         return {name: scenarioName, start, end, initial, curve, trades: trades(result.trade_ledger, start, end, report.symbol), notes};
       } catch (error) { return {name: scenarioName, reason: error.message}; }
     });
-    return {name, kind: "Historical study · approximate", feeEstimate: robinhoodFeeEstimate.feeCents, start: scenarios.find(scenario => scenario.start)?.start ?? null, assumptions, scenarios};
+    return {name, kind: "Historical study · approximate", feeEstimate: report.fee_model ? null : robinhoodFeeEstimate.feeCents, feeModel: report.fee_model?.id, start: scenarios.find(scenario => scenario.start)?.start ?? null, assumptions, scenarios};
   }
   function weekly(scenario) {
     const weeks = new Map();
@@ -261,8 +266,8 @@
     byID("source-badge").textContent = simulation ? report?.kind ?? "Historical simulation" : "Live account";
     byID("notice").className = simulation ? "notice warning" : "notice";
     byID("notice").textContent = simulation ? report ? report.reason ?? scenario?.reason ?? [report.kind + " · " + (scenario?.start ?? "") + " to " + (scenario?.end ?? ""), ...(scenario?.notes ?? [])].join("\n") : "No historical reports are attached to this installation. Add saved AutoWheel report JSON files to view weekly simulation results." : liveMessage;
-    byID("fee-estimate").hidden = !simulation || report?.feeEstimate === undefined || report?.feeEstimate === null;
-    byID("fee-estimate").textContent = report?.feeEstimate !== undefined && report?.feeEstimate !== null ? "Robinhood fee estimate: " + money(report.feeEstimate) + " per filled option contract · estimate, not an invoice." : "";
+    byID("fee-estimate").hidden = !simulation || (!report?.feeModel && (report?.feeEstimate === undefined || report?.feeEstimate === null));
+    byID("fee-estimate").textContent = report?.feeModel ? "Robinhood dated retail fees · Jan–Oct 9, 2026 · modeled charges, not invoices." : report?.feeEstimate !== undefined && report?.feeEstimate !== null ? "Legacy flat fee assumption: " + money(report.feeEstimate) + " per option contract · superseded by dated Robinhood fees." : "";
     byID("assumptions").textContent = report?.assumptions.join("\n\n") ?? "";
     byID("disclosures").hidden = !report?.assumptions.length;
     weeks = scenario?.curve ? weekly(scenario) : new Map();

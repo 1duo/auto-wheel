@@ -54,7 +54,22 @@ For a fixed-strategy universe comparison, add `--study-preset conservative-roi-v
 and `--study-symbols NVDA,IREN,NOW,AMD,AMZN,GOOGL,META,MSFT,PLTR,AVGO,NBIS,RKLB,COIN,MSTR,HOOD`.
 These flags require `--available-presets`; they leave the default ten-symbol
 and calendar-year paths unchanged. Replay the original ten with the same
-dates, seed and costs. Selecting additions from current IV is retrospective.
+dates, seed and fees. Selecting additions from current IV is retrospective.
+
+The 2026 shared-portfolio path uses only the dated Robinhood US retail fee
+schedule checked October 13, 2026, for January 1–October 9. One option sale pays
+4¢ ORF/OCC plus the premium-dependent SEC charge from April 4, rounded up to
+cents; before April 4 the SEC charge is zero. Single-contract TAF and CAT round
+to zero. Call-away stock proceeds use the published equity-sale rules, including
+the October TAF pause; applying those rules to delivery is a model inference,
+not a verified broker invoice. Fees affect eligibility, ROI ranking, upfront
+admissions, and the cash ledger. No flat 6¢/$2 cases or added price allowance
+are used for this path. Existing 2024/2025 fixed-cost artifacts are legacy
+research and do not establish Robinhood fees for those years.
+
+Fee sources: [Robinhood trading fees](https://robinhood.com/us/en/support/articles/trading-fees-on-robinhood/),
+[Robinhood fee schedule](https://cdn.robinhood.com/assets/robinhood/legal/RHF%20Fee%20Schedule.pdf),
+and [options investing](https://robinhood.com/us/en/support/articles/options-investing/).
 The 2026 execution model uses non-penny increments for NOW before its
 [July 1 Penny Program addition](https://www.nasdaqtrader.com/MicroNews.aspx?id=OTA+2026-25).
 

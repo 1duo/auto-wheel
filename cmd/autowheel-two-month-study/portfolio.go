@@ -36,6 +36,7 @@ type portfolioCandidate struct {
 	Limit       int64   `json:"limit_cents"`
 	Numerator   int64   `json:"net_roi_credit_cents"`
 	Denominator int64   `json:"capital_days_cents"`
+	Fee         int64   `json:"fee_cents"`
 }
 
 type portfolioTrade struct {
@@ -97,10 +98,19 @@ func portfolioTotals(accounts map[string]*account) (active int, committed, reser
 // Freeze all admissions at the decision clock. Future fills cannot add slots,
 // recycle premium or replace an unfilled higher-ranked order on this date.
 func portfolioAdmissions(all []portfolioCandidate, accounts map[string]*account, cash, fee, ceiling int64) []portfolioCandidate {
+	all = slices.Clone(all)
+	for i := range all {
+		all[i].Fee = fee
+	}
+	return portfolioAdmissionsWithFees(all, accounts, cash, ceiling)
+}
+
+func portfolioAdmissionsWithFees(all []portfolioCandidate, accounts map[string]*account, cash, ceiling int64) []portfolioCandidate {
 	active, committed, reserve := portfolioTotals(accounts)
 	available, budget := cash-reserve, ceiling-committed
 	selected, seen := []portfolioCandidate{}, map[string]bool{}
 	for _, c := range all {
+		fee := c.Fee
 		if seen[c.Symbol] {
 			continue
 		}
@@ -127,6 +137,10 @@ func portfolioAdmissions(all []portfolioCandidate, accounts map[string]*account,
 }
 
 func portfolioCandidates(in input, index int, a *account, base profile, fee, allowance int64) []portfolioCandidate {
+	return portfolioCandidatesWithFees(in, index, a, base, portfolioFeeSchedule{Fixed: fee}, allowance)
+}
+
+func portfolioCandidatesWithFees(in input, index int, a *account, base profile, fees portfolioFeeSchedule, allowance int64) []portfolioCandidate {
 	d := in.Days[index]
 	if d.Entry == nil || a.Short != nil {
 		return nil
@@ -158,7 +172,7 @@ func portfolioCandidates(in input, index int, a *account, base profile, fee, all
 		}
 		s := *d.Entry
 		s.Quotes = []quote{original}
-		q, delta, vol, _, ok := selectContract(in.Symbol, p, fee, s, a.Basis)
+		q, delta, vol, _, ok := selectContract(in.Symbol, p, fees.optionSale(d.Date, original.Bid), s, a.Basis)
 		if !ok {
 			continue
 		}
@@ -167,6 +181,7 @@ func portfolioCandidates(in input, index int, a *account, base profile, fee, all
 			continue
 		}
 		limit -= limit % orderIncrement(d.Date, q.Contract, limit)
+		fee := fees.optionSale(d.Date, limit)
 		numerator, capital := limit*100-fee, q.Strike*100
 		if numerator <= 0 {
 			continue
@@ -182,7 +197,7 @@ func portfolioCandidates(in input, index int, a *account, base profile, fee, all
 		if days < 1 || days > 8 {
 			continue
 		}
-		all = append(all, portfolioCandidate{in.Symbol, q, p, regime, delta, vol, limit, numerator, capital * days})
+		all = append(all, portfolioCandidate{in.Symbol, q, p, regime, delta, vol, limit, numerator, capital * days, fee})
 	}
 	return all
 }
@@ -204,8 +219,25 @@ func simulatePortfolio(inputs []input, base profile, seed, fee, allowance, ceili
 }
 
 func simulatePortfolioWithActions(inputs []input, base profile, seed, fee, allowance, ceiling int64, facts []portfolioDividend, supplements map[string]int64, actions []historicalAction) (map[string]any, error) {
+	return simulatePortfolioUsingFees(inputs, base, seed, portfolioFeeSchedule{Fixed: fee}, allowance, ceiling, facts, supplements, actions)
+}
+
+func simulatePortfolioUsingFees(inputs []input, base profile, seed int64, feeSchedule portfolioFeeSchedule, allowance, ceiling int64, facts []portfolioDividend, supplements map[string]int64, actions []historicalAction) (map[string]any, error) {
+	fee := feeSchedule.Fixed
 	if seed <= 0 || seed > 100_000_000 || ceiling <= 0 || ceiling > 15_000_000 || fee < 0 || fee > 200 || allowance < 0 || allowance > 1 || len(inputs) == 0 {
 		return nil, errors.New("invalid portfolio scope or money bounds")
+	}
+	if feeSchedule.Robinhood {
+		if fee != 0 || allowance != 0 {
+			return nil, errors.New("Robinhood fees cannot be overridden by flat costs or price allowances")
+		}
+		for _, in := range inputs {
+			for _, d := range in.Days {
+				if date, err := time.Parse("2006-01-02", d.Date); err != nil || date.Format("2006-01-02") != d.Date || d.Date < "2026-01-01" || d.Date > "2026-10-09" {
+					return nil, errors.New("Robinhood fee schedule outside verified 2026 window")
+				}
+			}
+		}
 	}
 	accounts := map[string]*account{}
 	for _, in := range inputs {
@@ -244,10 +276,10 @@ func simulatePortfolioWithActions(inputs []input, base profile, seed, fee, allow
 		}
 		all := []portfolioCandidate{}
 		for _, in := range inputs {
-			all = append(all, portfolioCandidates(in, index, accounts[in.Symbol], base, fee, allowance)...)
+			all = append(all, portfolioCandidatesWithFees(in, index, accounts[in.Symbol], base, feeSchedule, allowance)...)
 		}
 		slices.SortFunc(all, portfolioROICompare)
-		selected := portfolioAdmissions(all, accounts, cash, fee, ceiling)
+		selected := portfolioAdmissionsWithFees(all, accounts, cash, ceiling)
 		for rank, c := range selected {
 			in := inputs[slices.IndexFunc(inputs, func(in input) bool { return in.Symbol == c.Symbol })]
 			o, filled := modelOrder(in.Days[index], c.Quote, allowance)
@@ -257,7 +289,7 @@ func simulatePortfolioWithActions(inputs []input, base profile, seed, fee, allow
 			}
 			a := accounts[c.Symbol]
 			a.Cash = cash
-			if err := a.sell(date.Date, c.Quote, fee, o.Limit, c.Delta, c.Vol); err != nil {
+			if err := a.sell(date.Date, c.Quote, c.Fee, o.Limit, c.Delta, c.Vol); err != nil {
 				return nil, err
 			}
 			cash = a.Cash
@@ -282,6 +314,13 @@ func simulatePortfolioWithActions(inputs []input, base profile, seed, fee, allow
 				a.Cash = cash
 				if err := a.settleOutcome(d.Date, strike-ref.Native >= 10_000_000, ref.Native-strike >= 10_000_000); err != nil {
 					return nil, err
+				}
+				t := &a.Trades[len(a.Trades)-1]
+				if t.Event == "modeled_call_away" {
+					t.Fee = feeSchedule.stockDeliverySale(d.Date, t.Strike)
+					t.Cashflow -= t.Fee
+					a.Cash -= t.Fee
+					a.Fees += t.Fee
 				}
 				cash = a.Cash
 				trades = append(trades, portfolioTrade{in.Symbol, a.Trades[len(a.Trades)-1]})
@@ -349,6 +388,10 @@ func simulatePortfolioWithActions(inputs []input, base profile, seed, fee, allow
 	r := map[string]any{"strategy": base.ID, "mode": base.Mode, "fee_per_contract_cents": fee, "price_allowance_cents": allowance, "starting_cash_cents": seed, "ending_cash_cents": cash, "ending_equity_cents": last.Equity, "premium_cents": premiums, "fees_cents": fees, "dividend_income_cents": income, "dividend_paid_cents": paid, "ending_dividend_receivable_cents": income - paid, "stock_realized_cents": realized, "stock_unrealized_cents": unrealized, "assignments": assignments, "call_aways": calls, "peak_committed_cents": peakCommit, "peak_active_symbols": peakSlots, "eod_supplement_mark_states": supplementalMarks, "cash_ledger_reconciled": true, "daily_equity": daily, "trade_ledger": trades, "order_ledger": orders, "ending_positions": last.Positions}
 	if base.ID == "baseline" {
 		r["strategy"] = string(base.Mode)
+	}
+	if feeSchedule.Robinhood {
+		delete(r, "fee_per_contract_cents")
+		r["fee_model"] = robinhoodFeeDisclosure()
 	}
 	if last.Equity != nil {
 		pnl := *last.Equity - seed
@@ -466,13 +509,11 @@ func runPortfolioUniverse(root, output string, seed, ceiling int64, availablePre
 	}
 	results := []map[string]any{}
 	for _, p := range profiles {
-		for _, cost := range [][2]int64{{6, 0}, {200, 1}} {
-			r, err := simulatePortfolio(inputs, p, seed, cost[0], cost[1], ceiling, dividends.Facts, supplements)
-			if err != nil {
-				return err
-			}
-			results = append(results, r)
+		r, err := simulatePortfolioUsingFees(inputs, p, seed, portfolioFeeSchedule{Robinhood: true}, 0, ceiling, dividends.Facts, supplements, nil)
+		if err != nil {
+			return err
 		}
+		results = append(results, r)
 	}
 	executable, err := os.Executable()
 	if err != nil {
@@ -483,7 +524,8 @@ func runPortfolioUniverse(root, output string, seed, ceiling int64, availablePre
 		return err
 	}
 	digest := sha256.Sum256(b)
-	report := map[string]any{"schema": "AutoWheelSharedPortfolioEndpointStudyV1", "start": inputs[0].Start, "end": inputs[0].End, "symbols": portfolioSymbols, "starting_cash_cents": seed, "max_managed_symbols": 3, "max_contracts_per_symbol": 1, "max_collateral_cents": ceiling, "source_sha256": pins, "executable_sha256": hex.EncodeToString(digest[:]), "results": results, "production_qualified": false, "ranking_policy": "All eligible nearest-expiry contracts ranked by net quoted ROI per day, then symbol and contract. Put denominator: strike collateral. Call numerator: signed time value less fee; denominator: decision stock midpoint. Original delta bands retained; delta-first ordering overridden in this offline study. Admissions frozen before observing executions; unfilled selections are not replaced.", "valuation_policy": "Owned stock: official unadjusted close, aggregate position value floored to cents. Native stock bid sensitivity retained. Fresh native option asks preferred; hash-pinned EOD supplements only for missing marks. Supplement publication clocks do not meet strict 4pm freshness. Missing marks remain null.", "limitations": []string{"Weekly decisions only; 194 sessions, 40 entry dates. Bounded strikes, not complete chains.", "European modeled Greeks; fixed 4% pricing rate and zero dividend yield; open-interest filtering omitted.", "Expiry-only exercise at one cent ITM, no early exercise or settlement delay. Observed ordinary dividends accrue at ex-date and pay on payment date.", "Contemporary universe selected from July-September outcomes; retrospective, not blind out-of-sample.", "Six-cent fee is a fixed retail estimate, not an invoice; $2 plus one-cent allowance is a separate cost/path sensitivity. No cash interest or taxes."}}
+	report := map[string]any{"schema": "AutoWheelSharedPortfolioEndpointStudyV1", "start": inputs[0].Start, "end": inputs[0].End, "symbols": portfolioSymbols, "starting_cash_cents": seed, "max_managed_symbols": 3, "max_contracts_per_symbol": 1, "max_collateral_cents": ceiling, "source_sha256": pins, "executable_sha256": hex.EncodeToString(digest[:]), "results": results, "production_qualified": false, "ranking_policy": "All eligible nearest-expiry contracts ranked by net quoted ROI per day, then symbol and contract. Put denominator: strike collateral. Call numerator: signed time value less fee; denominator: decision stock midpoint. Original delta bands retained; delta-first ordering overridden in this offline study. Admissions frozen before observing executions; unfilled selections are not replaced.", "valuation_policy": "Owned stock: official unadjusted close, aggregate position value floored to cents. Native stock bid sensitivity retained. Fresh native option asks preferred; hash-pinned EOD supplements only for missing marks. Supplement publication clocks do not meet strict 4pm freshness. Missing marks remain null.", "limitations": []string{"Weekly decisions only; 194 sessions, 40 entry dates. Bounded strikes, not complete chains.", "European modeled Greeks; fixed 4% pricing rate and zero dividend yield; open-interest filtering omitted.", "Expiry-only exercise at one cent ITM, no early exercise or settlement delay. Observed ordinary dividends accrue at ex-date and pay on payment date.", "Contemporary universe selected from July-September outcomes; retrospective, not blind out-of-sample.", "Robinhood dated retail fees only; call-away proceeds use stock-sale regulatory rules as a model inference. No cash interest, taxes, optional subscriptions or service charges. Not broker invoices."}}
+	report["fee_model"] = robinhoodFeeDisclosure()
 	if availablePresets {
 		report["schema"] = "AutoWheelAvailablePresetEndpointStudyV1"
 		report["symbols"] = symbols
