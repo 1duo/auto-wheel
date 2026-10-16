@@ -120,7 +120,7 @@ func Reconcile(st *State, s Snapshot, now time.Time) error {
 			if st.CompletedOrders == nil {
 				st.CompletedOrders = map[string]OrderRecord{}
 			}
-			st.CompletedOrders[o.ID] = OrderRecord{Ref: in.Ref, Symbol: symbol, OptionID: in.Candidate.ID, At: in.At, Closing: in.Candidate.Closing}
+			st.CompletedOrders[o.ID] = OrderRecord{Ref: in.Ref, Symbol: symbol, OptionID: in.Candidate.ID, At: in.At, Closing: in.Candidate.Closing, Filled: o.Filled}
 		}
 		delete(st.Intents, symbol)
 	}

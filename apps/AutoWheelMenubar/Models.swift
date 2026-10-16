@@ -58,6 +58,8 @@ struct WheelPosition: Decodable {
 }
 
 struct WheelCandidate: Decodable {
+    let closing: Bool?
+    let close_limit_cents: Int64?
     let id: String
     let symbol: String
     let kind: String

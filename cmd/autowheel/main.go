@@ -419,6 +419,29 @@ func run() error {
 			update(s)
 			return nil
 		}
+		liveClose := s.Mode == "live" && !halted
+		if handled, candidate, closeErr := wheel.RunPriorityClose(cycleCtx, c, &st, j, b, snapshot, liveClose, time.Now); handled || closeErr != nil {
+			s.Stage = "priority_profit_close"
+			s.Reason = "Priority profit close precedes all new entries"
+			if candidate != nil {
+				s.Candidates = []wheel.Candidate{*candidate}
+			}
+			if closeErr != nil {
+				s.Stage, s.Reason = "blocked", closeErr.Error()
+			} else if halted {
+				s.Stage, s.Reason = "halted", "Priority profit close prepared; live trading is paused"
+			} else if liveClose {
+				s.Stage, s.Reason = "submitted", "Priority close submitted; entries wait for confirmed fill and released position"
+				// Reconcile once promptly after acceptance. Pending or uncertain
+				// outcomes then wait for the normal poll; never resubmit the close.
+				select {
+				case wake <- struct{}{}:
+				default:
+				}
+			}
+			update(s)
+			return nil
+		}
 		candidates, scanErrors := scan(cycleCtx, c, st, b, snapshot.AvailableCash)
 		if len(scanErrors) == len(c.Symbols) {
 			s.Stage = "blocked"

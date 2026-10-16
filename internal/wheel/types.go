@@ -78,6 +78,8 @@ type Config struct {
 	PollSeconds          int           `json:"poll_seconds"`
 	SelectionMode        SelectionMode `json:"selection_mode,omitempty"`
 	StrategyPreset       string        `json:"strategy_preset,omitempty"`
+
+	PriorityProfitClose *ProfitCloseTarget `json:"priority_profit_close,omitempty"`
 }
 
 func DefaultConfig() Config {
@@ -204,6 +206,11 @@ func (c Config) Validate() error {
 			}
 		}
 		seen[s] = true
+	}
+	if p := c.PriorityProfitClose; p != nil {
+		if c.OrderCoveragePolicy != "exclusive_standard" || c.CoordinatorSocket != "" || !seen[p.Symbol] || p.OptionID == "" || len(p.OptionID) > 128 || strings.TrimSpace(p.OptionID) != p.OptionID || p.OpenedAt.IsZero() || p.OpenedAt.After(time.Now()) || p.MaxLimit <= 0 || p.MaxLimit > MaxMoney/100 {
+			return errors.New("invalid exclusive priority profit-close target")
+		}
 	}
 	if c.MaxCollateral < 0 || c.MaxCollateral > MaxMoney || c.Reserve < 0 || c.Reserve > MaxMoney || (c.MaxCollateral > 0 && c.Reserve >= c.MaxCollateral) {
 		return errors.New("invalid collateral ceiling or reserve")
@@ -347,6 +354,7 @@ type State struct {
 // Completed receipts survive expiration and call-away. History from another
 // writer must never be mistaken for this daemon's own terminal order.
 type OrderRecord struct {
+	Filled   int       `json:"filled,omitzero"`
 	Closing  bool      `json:"closing,omitzero"`
 	Ref      string    `json:"ref_id"`
 	Symbol   string    `json:"symbol"`
@@ -366,7 +374,7 @@ func (s State) Validate() error {
 		return errors.New("completed order ledger requires operator archival; never discard ownership automatically")
 	}
 	for id, r := range s.CompletedOrders {
-		if id == "" || r.Ref == "" || r.Symbol == "" || r.OptionID == "" || r.At.IsZero() {
+		if id == "" || r.Ref == "" || r.Symbol == "" || r.OptionID == "" || r.At.IsZero() || r.Filled < 0 || r.Filled > 1 {
 			return errors.New("invalid completed order ownership record")
 		}
 	}

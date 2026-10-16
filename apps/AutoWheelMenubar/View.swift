@@ -400,8 +400,13 @@ struct WheelView: View {
     private func candidateView(_ a: WheelCandidate) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             row("\(a.symbol) · \(a.kind.uppercased())", "\(money(a.strike_cents)) · \(a.expiry)")
-            row("Limit / net credit", "\(money(a.bid_cents)) / \(money(a.net_premium_cents))")
-            row(a.kind == "put" ? "Collateral / yield per day" : "Delta / time-value yield per day", a.kind == "put" ? "\(money(a.collateral_cents, decimals: false)) / \(percent(a.return_per_day))" : "\(deltaText(a.delta)) / \(percent(a.return_per_day))")
+            if a.closing == true {
+                row("Buy to close · maximum price", money(a.close_limit_cents ?? 0))
+                detail("Priority exit. New entries wait for the confirmed fill and released position.")
+            } else {
+                row("Limit / net credit", "\(money(a.bid_cents)) / \(money(a.net_premium_cents))")
+                row(a.kind == "put" ? "Collateral / yield per day" : "Delta / time-value yield per day", a.kind == "put" ? "\(money(a.collateral_cents, decimals: false)) / \(percent(a.return_per_day))" : "\(deltaText(a.delta)) / \(percent(a.return_per_day))")
+            }
             if a.kind == "call" {
                 row("Call-away P&L · this call + shares", money(a.call_away_pnl_cents ?? 0))
                 detail("Excludes earlier premiums and taxes.").font(MenuFont.detail).foregroundStyle(.secondary)

@@ -304,6 +304,9 @@ func Plan(c Config, st State, s Snapshot, candidates []Candidate, now time.Time)
 	if len(active) > c.MaxSymbols {
 		return nil, errors.New("account exceeds active symbol limit")
 	}
+	if pending, err := PriorityClosePending(c, st); err != nil || pending {
+		return nil, err // Compatibility reads may continue; entries cannot overtake the close.
+	}
 	slices.SortFunc(candidates, func(a, b Candidate) int {
 		priority := func(kind string) int {
 			if kind == "call" {

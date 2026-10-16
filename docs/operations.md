@@ -74,6 +74,10 @@ A slot clears only after the broker confirms a fully filled owned close and the 
 
 ## Available-cash allocation
 
+For a specific exit-before-entry instruction, `priority_profit_close` binds the symbol, exact option ID, original `opened_at`, and `max_limit_cents` per share. It does not activate trading. Under an authorized live session, the daemon submits that profitable close before any new entry, then waits for the confirmed fill and disappearance of the short position. Reentry uses a fresh account snapshot and the normal selection rules. Paused deployments show the close as a read-only candidate.
+
+A changed lifecycle, stale or missing data, a quote above the cap, or an unresolved submission blocks the priority and all entries. An unfilled terminal attempt is not resubmitted automatically. Filled completion is retained in the ownership journal, so ordinary restarts and later cycles do not require another close action or repeat the target against a new position. The added `filled` receipt field requires this release or a compatible newer reader after the first new terminal receipt; rollback must preserve the journal and use a compatible binary.
+
 `max_collateral_cents: 0` removes the fixed account ceiling and its per-symbol division. Each put still needs its entire strike collateral plus the configured fee, funded from fresh broker available cash less `cash_reserve_cents`. Already-held collateral is not subtracted from available cash again. No margin, pending release or expected premium is treated as available cash. Positive ceilings retain their fixed account and equal-slot limits. Shared coordinator deployments retain their separately qualified fixed policy.
 
 The daemon filters unaffordable contracts before ranking, then refreshes cash after scans and again after broker review. It shows read-only candidates while paused. The three-symbol and one-contract rules, conservative ranking and liquidity filters remain in force; all available cash is a funding limit, not a requirement to spend every dollar or loosen selection rules.
