@@ -90,11 +90,11 @@ struct WheelView: View {
             }.padding(.horizontal, 14).padding(.vertical, 8)
             ForEach((s.positions ?? [:]).keys.sorted(), id: \.self) { symbol in
                 if s.positions?[symbol]?.put_id != nil {
-                    actionRow("Take Profit · \(symbol)…", symbol: "checkmark.circle") {
+                    actionRow("Close for Profit · \(symbol)", symbol: "checkmark.circle") {
                         Task { await model.takeProfit(symbol) }
                     }
-                    .disabled(!model.connected || model.busy || !s.halted || !model.canEnableLive)
-                    .help("Pause live trading first, then preview a capped buy-to-close order. New entries remain paused.")
+                    .disabled(!model.connected || model.busy || (!s.halted && s.mode != "live") || !model.canEnableLive)
+                    .help("Submit one buy-to-close order capped at the fresh ask, only if profit remains after fee allowances. No additional dialog. An existing live session continues after reconciliation.")
                 }
             }
             if let currentSelection = s.config.selectionMode {
@@ -139,7 +139,7 @@ struct WheelView: View {
                 row("Agentic Account", "••••\(info.account_last4)")
                 row("Broker Read", age(info.at))
             }
-            row("Capital Ceiling", money(s.config.max_collateral_cents, decimals: false))
+            row("Capital Ceiling", s.config.max_collateral_cents == 0 ? "Broker available cash" : money(s.config.max_collateral_cents, decimals: false))
             row("Available Cash · last known", s.broker.map { money($0.available_cash_cents) } ?? s.account_info.map { money($0.available_cash_cents) } ?? "Unavailable")
             row("Cash Reserve", money(s.config.cash_reserve_cents, decimals: false))
             if let coord = s.coordinator {

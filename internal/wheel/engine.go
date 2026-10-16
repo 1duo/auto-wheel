@@ -274,7 +274,7 @@ func Execute(ctx context.Context, c Config, st *State, store Store, b Broker, a 
 		return err
 	}
 	cost := st.Positions[a.Symbol].Cost
-	a, ok := Select(c, a.Symbol, a.Kind, quotes, cost, now())
+	a, ok := SelectFunded(c, a.Symbol, a.Kind, quotes, cost, s.AvailableCash, now())
 	if !ok {
 		return errors.New("candidate no longer eligible")
 	}

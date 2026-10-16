@@ -17,6 +17,7 @@ type configCheckReport struct {
 	BrokerVerified     bool         `json:"broker_verified"`
 	TradingAuthorized  bool         `json:"trading_authorized"`
 	SymbolCollateral   wheel.Cents  `json:"max_symbol_collateral_cents"`
+	AvailableCashOnly  bool         `json:"use_available_cash"`
 	Config             wheel.Config `json:"config"`
 }
 
@@ -29,7 +30,11 @@ func writeConfigCheck(out io.Writer, c wheel.Config) error {
 	r := configCheckReport{
 		Version: version, Scope: "configuration_only", ConfigurationValid: true,
 		ConfigDigest: configDigest(c), AccountConfigured: c.Account != "", Config: c,
-		SymbolCollateral: c.SymbolCollateralLimit(),
+		SymbolCollateral:  c.SymbolCollateralLimit(),
+		AvailableCashOnly: c.MaxCollateral == 0,
+	}
+	if r.AvailableCashOnly {
+		r.SymbolCollateral = 0 // No fixed limit; the broker supplies current capacity.
 	}
 	if c.Account != "" {
 		r.AccountLast4 = c.Account[max(0, len(c.Account)-4):]

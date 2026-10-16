@@ -87,13 +87,25 @@ func DefaultConfig() Config {
 		MaxQuoteAgeSeconds: 30, MaxDays: 8, PollSeconds: 300}
 }
 
-// SymbolCollateralLimit allocates the fixed account ceiling across managed
-// slots. It does not grow with profits or shrink an existing owned position.
+// A zero ceiling uses broker available cash, without a fixed per-slot allocation.
+// Positive ceilings retain the existing equal-slot allocation.
 func (c Config) SymbolCollateralLimit() Cents {
-	if c.MaxCollateral <= 0 || c.MaxCollateral > MaxMoney || c.MaxSymbols < 1 || c.MaxSymbols > 3 {
+	if c.MaxCollateral < 0 || c.MaxCollateral > MaxMoney || c.MaxSymbols < 1 || c.MaxSymbols > 3 {
 		return 0
 	}
+	if c.MaxCollateral == 0 {
+		return MaxMoney
+	}
 	return c.MaxCollateral / Cents(c.MaxSymbols)
+}
+
+// EntryCashLimit includes fees and excludes reserves; broker cash already
+// excludes collateral holds. Never subtract those holds a second time.
+func (c Config) EntryCashLimit(available Cents) Cents {
+	if available < 0 || available > MaxMoney || c.Reserve < 0 || c.Reserve > available {
+		return 0
+	}
+	return min(available-c.Reserve, c.SymbolCollateralLimit())
 }
 
 // FitsSymbolCollateral includes the entry fee without overflowing money.
@@ -193,8 +205,11 @@ func (c Config) Validate() error {
 		}
 		seen[s] = true
 	}
-	if c.MaxCollateral <= 0 || c.MaxCollateral > 8_000_000 || c.Reserve < 0 || c.Reserve >= c.MaxCollateral {
+	if c.MaxCollateral < 0 || c.MaxCollateral > MaxMoney || c.Reserve < 0 || c.Reserve > MaxMoney || (c.MaxCollateral > 0 && c.Reserve >= c.MaxCollateral) {
 		return errors.New("invalid collateral ceiling or reserve")
+	}
+	if c.CoordinatorSocket != "" && (c.MaxCollateral == 0 || c.MaxCollateral > 8_000_000) {
+		return errors.New("shared coordinator requires its qualified fixed collateral ceiling")
 	}
 	if c.Fee < 0 || c.Fee > 10000 || c.MinBid < 1 || c.MinOI < 1 || c.MaxSpreadBPS < 1 || c.MaxSpreadBPS > 3000 {
 		return errors.New("invalid liquidity or fee limits")

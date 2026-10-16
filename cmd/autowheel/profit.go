@@ -26,6 +26,7 @@ type profitPreview struct {
 	ClosingFee    wheel.Cents     `json:"closing_fee_cents"`
 	FeeAllowance  wheel.Cents     `json:"fee_allowance_cents"`
 	MinimumProfit wheel.Cents     `json:"minimum_profit_cents"`
+	ContinueLive  bool            `json:"continue_live"`
 }
 
 type profitControl struct {
@@ -91,8 +92,8 @@ func (p *profitControl) register(mux *http.ServeMux, dir string) {
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")
-			slog.Info("operator profit close submitted; entries paused")
-			json.NewEncoder(w).Encode(map[string]string{"status": "submitted; paused; awaiting broker reconciliation"})
+			slog.Info("operator profit close submitted; awaiting reconciliation")
+			json.NewEncoder(w).Encode(map[string]string{"status": "submitted; awaiting broker reconciliation"})
 		})
 	}
 }
@@ -113,6 +114,11 @@ func (p *profitControl) broker(ctx context.Context, live bool) (*robinhood.Broke
 
 func (p *profitControl) prepare(ctx context.Context, symbol string) (*profitPreview, error) {
 	p.preview = nil
+	status := p.read()
+	continueLive := !status.Halted && status.Mode == "live"
+	if !status.Halted && !continueLive {
+		return nil, errors.New("profit taking requires a live session or a paused deployment")
+	}
 	b, err := p.broker(ctx, false)
 	if err != nil {
 		return nil, err
@@ -148,8 +154,40 @@ func (p *profitControl) prepare(ctx context.Context, symbol string) (*profitPrev
 	if err != nil {
 		return nil, err
 	}
-	p.preview = &profitPreview{ID: rand.Text(), ExpiresAt: time.Now().Add(2 * time.Minute), Candidate: a, ClosingFee: fee, FeeAllowance: p.config.Fee, MinimumProfit: a.EntryCredit - a.CloseLimit*100 - 2*p.config.Fee}
+	p.preview = &profitPreview{ID: rand.Text(), ExpiresAt: time.Now().Add(2 * time.Minute), Candidate: a, ClosingFee: fee, FeeAllowance: p.config.Fee, MinimumProfit: a.EntryCredit - a.CloseLimit*100 - 2*p.config.Fee, ContinueLive: continueLive}
 	return p.preview, nil
+}
+
+// Called under submitMu. A live close reuses standing authorization without
+// rewriting it. In particular, a pause during preview cannot re-arm trading.
+func (p *profitControl) authorize(preview *profitPreview) error {
+	s := p.read()
+	if s.PendingSelectionMode != "" || s.PendingStrategyPreset != "" || !activationReady(s) {
+		return errors.New("readiness or selection changed before close authorization")
+	}
+	if preview.ContinueLive {
+		if s.Halted || s.Mode != "live" || !p.activation.enabled() || p.activation.profitOnly() != "" {
+			return errors.New("live session ended during close preview")
+		}
+		if _, err := os.Lstat(filepath.Join(p.activation.Dir, "HALT")); !errors.Is(err, os.ErrNotExist) {
+			return errors.New("close paused before authorization")
+		}
+		return nil
+	}
+	if !s.Halted {
+		return errors.New("trading mode changed during close preview")
+	}
+	err := pauseTrading(p.activation, p.activation.Dir, "prepare one close-only action")
+	if err == nil {
+		err = p.activation.enablePurpose(preview.ID)
+	}
+	if err == nil {
+		err = removeControl(p.activation.Dir, "HALT")
+	}
+	if err != nil {
+		return errors.Join(err, pauseTrading(p.activation, p.activation.Dir, "close authorization failed"))
+	}
+	return nil
 }
 
 func (p *profitControl) execute(ctx context.Context, id string) (err error) {
@@ -159,8 +197,8 @@ func (p *profitControl) execute(ctx context.Context, id string) (err error) {
 		return errors.New("close preview expired or already consumed; request a new preview")
 	}
 	s := p.read()
-	if !s.Halted || s.PendingSelectionMode != "" || s.PendingStrategyPreset != "" || !activationReady(s) {
-		return errors.New("pause trading and wait for native readiness before taking profit")
+	if s.PendingSelectionMode != "" || s.PendingStrategyPreset != "" || !activationReady(s) {
+		return errors.New("wait for native readiness before taking profit")
 	}
 	p.busy.Store(true)
 	defer p.busy.Store(false)
@@ -171,28 +209,17 @@ func (p *profitControl) execute(ctx context.Context, id string) (err error) {
 		}
 	}()
 	p.submitMu.Lock()
-	// Selection controls share this mutex. Recheck after acquiring it so a
-	// concurrent selection pause cannot be overwritten by close activation.
-	latest := p.read()
-	if !latest.Halted || latest.PendingSelectionMode != "" || latest.PendingStrategyPreset != "" || !activationReady(latest) {
-		p.submitMu.Unlock()
-		return errors.New("readiness or selection changed before close authorization")
-	}
-	err = pauseTrading(p.activation, p.activation.Dir, "prepare one close-only action")
-	if err == nil {
-		err = p.activation.enablePurpose(id)
-	}
-	if err == nil {
-		err = removeControl(p.activation.Dir, "HALT")
-	}
+	err = p.authorize(preview)
 	p.submitMu.Unlock()
-	defer func() {
-		p.submitMu.Lock()
-		err = errors.Join(err, pauseTrading(p.activation, p.activation.Dir, "profit-taking action finished; new entries remain paused"))
-		p.submitMu.Unlock()
-	}()
 	if err != nil {
 		return err
+	}
+	if !preview.ContinueLive {
+		defer func() {
+			p.submitMu.Lock()
+			err = errors.Join(err, pauseTrading(p.activation, p.activation.Dir, "profit-taking action finished; new entries remain paused"))
+			p.submitMu.Unlock()
+		}()
 	}
 	b, err := p.broker(ctx, true)
 	if err != nil {
@@ -202,8 +229,12 @@ func (p *profitControl) execute(ctx context.Context, id string) (err error) {
 		if err := p.activation.fenceIsolation(); err != nil {
 			return err
 		}
-		if !p.activation.enabled() || p.activation.profitOnly() != id || !time.Now().Before(preview.ExpiresAt) {
-			return errors.New("close-only authorization absent or expired")
+		purpose := id
+		if preview.ContinueLive {
+			purpose = ""
+		}
+		if !p.activation.enabled() || p.activation.profitOnly() != purpose || !time.Now().Before(preview.ExpiresAt) {
+			return errors.New("close authorization absent or expired")
 		}
 		if _, err := os.Lstat(filepath.Join(p.activation.Dir, "HALT")); !errors.Is(err, os.ErrNotExist) {
 			return errors.New("close paused before submission")

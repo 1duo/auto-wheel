@@ -234,7 +234,7 @@ func preflight(ctx context.Context, c wheel.Config, st wheel.State, b *robinhood
 		if r.Preview != nil {
 			continue
 		}
-		candidate, ok := wheel.PreviewCandidate(c, symbol, kind, quotes, st.Positions[symbol].Cost, time.Now())
+		candidate, ok := wheel.PreviewFunded(c, symbol, kind, quotes, st.Positions[symbol].Cost, s.AvailableCash, time.Now())
 		if !ok {
 			r.Unavailable[symbol] = "decoded contracts; no liquid preview candidate"
 			continue
@@ -252,7 +252,7 @@ func preflight(ctx context.Context, c wheel.Config, st wheel.State, b *robinhood
 					occupied = true
 				}
 			}
-			if occupied || candidate.Collateral+c.Fee > min(s.AvailableCash-c.Reserve, c.MaxCollateral) {
+			if occupied || !wheel.FitsSymbolCollateral(candidate.Collateral, c.Fee, c.EntryCashLimit(s.AvailableCash)) {
 				continue
 			}
 		}

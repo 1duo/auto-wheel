@@ -2,7 +2,7 @@
 
 Deterministic cash-secured puts → assigned shares → covered calls through Robinhood's official Agentic Trading MCP. No AI in the trading loop.
 
-One cash account, at most three managed symbols, one contract per symbol. Defaults: conservative put delta 0.05–0.15 and an $80,000 collateral ceiling. Requires Go 1.26.9+; `go.mod` selects Go 1.27.2.
+One cash account, at most three managed symbols, one contract per symbol. Conservative put delta: 0.05–0.15. Set `max_collateral_cents` to `0` to use broker-verified available cash without a fixed account or per-symbol ceiling; positive values retain equal slot budgets. `init` retains the legacy $80,000 starting ceiling; the deployment example uses available cash. Requires Go 1.26.9+; `go.mod` selects Go 1.27.2.
 
 Selected ten: NVDA, IREN, AMD, AMZN, GOOGL, AVGO, NBIS, COIN, MSTR, HOOD. See [selection method and limits](docs/universe.md).
 

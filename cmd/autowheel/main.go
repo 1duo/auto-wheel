@@ -412,12 +412,6 @@ func run() error {
 				return nil
 			}
 		}
-		if halted {
-			s.Stage = "halted"
-			s.Reason = "Live trading is paused"
-			update(s)
-			return nil
-		}
 		// Refresh account facts and reconcile outside market hours; scans,
 		// reviews and submissions remain inside the configured order window.
 		if !wheel.TradingWindow(time.Now()) {
@@ -425,7 +419,7 @@ func run() error {
 			update(s)
 			return nil
 		}
-		candidates, scanErrors := scan(cycleCtx, c, st, b)
+		candidates, scanErrors := scan(cycleCtx, c, st, b, snapshot.AvailableCash)
 		if len(scanErrors) == len(c.Symbols) {
 			s.Stage = "blocked"
 			s.Reason = "all symbol scans failed"
@@ -467,6 +461,12 @@ func run() error {
 		s.Stage = "planned"
 		if len(scanErrors) > 0 {
 			s.Reason = fmt.Sprintf("%d symbol scans failed; see journal logs", len(scanErrors))
+		}
+		if halted {
+			s.Stage = "halted"
+			s.Reason = "Live trading is paused; candidates are read-only"
+			update(s)
+			return nil
 		}
 		if s.Mode == "live" {
 			for _, a := range plan {
@@ -568,7 +568,7 @@ func loadConfig(path string) (wheel.Config, error) {
 	return c, c.Validate()
 }
 
-func scan(ctx context.Context, c wheel.Config, st wheel.State, b wheel.Broker) ([]wheel.Candidate, []error) {
+func scan(ctx context.Context, c wheel.Config, st wheel.State, b wheel.Broker, available wheel.Cents) ([]wheel.Candidate, []error) {
 	jobs := make(chan string, len(c.Symbols))
 	for _, s := range c.Symbols {
 		jobs <- s
@@ -593,7 +593,7 @@ func scan(ctx context.Context, c wheel.Config, st wheel.State, b wheel.Broker) (
 					slog.Warn("symbol scan blocked", "symbol", symbol, "reason", err.Error())
 					continue
 				}
-				if candidate, ok := wheel.Select(c, symbol, kind, quotes, st.Positions[symbol].Cost, time.Now()); ok {
+				if candidate, ok := wheel.SelectFunded(c, symbol, kind, quotes, st.Positions[symbol].Cost, available, time.Now()); ok {
 					mu.Lock()
 					out = append(out, candidate)
 					mu.Unlock()

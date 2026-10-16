@@ -13,7 +13,7 @@
     "HOOD"
   ],
   "max_symbols": 3,
-  "max_collateral_cents": 8000000,
+  "max_collateral_cents": 0,
   "cash_reserve_cents": 0,
   "fee_per_contract_cents": 100,
   "min_bid_cents": 5,

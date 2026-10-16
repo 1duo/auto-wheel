@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +14,52 @@ import (
 	aruntime "autowheel/internal/runtime"
 	"autowheel/internal/wheel"
 )
+
+func TestProfitStandingAuthorizationAndPauseFence(t *testing.T) {
+	c := wheel.DefaultConfig()
+	c.Account, c.TradePulseStateDir = "12345678", t.TempDir()
+	writePeerConfig(t, c.TradePulseStateDir, "87654321")
+	dir := t.TempDir()
+	a := &activationControl{Capable: true, Config: c, Dir: dir}
+	if err := a.enable(); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(filepath.Join(dir, "LIVE.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ready := status{Mode: "live", LiveCapable: true, Broker: &wheel.Snapshot{At: time.Now()}, LiveReadiness: &liveReadiness{Ready: true, At: time.Now()}}
+	st := wheel.NewState()
+	p := &profitControl{activation: a, config: c, state: &st, submitMu: &sync.Mutex{}, wake: make(chan struct{}, 1), read: func() status { return ready }}
+	preview := &profitPreview{ID: "id", ExpiresAt: time.Now().Add(time.Minute), ContinueLive: true}
+	if err := p.authorize(preview); err != nil {
+		t.Fatal("existing live authorization rejected", err)
+	}
+	p.preview = preview
+	// Unsupported policy prevents broker access, but a close validation failure
+	// must not revoke an existing live session or arm a new close-only session.
+	if err := p.execute(t.Context(), preview.ID); err == nil {
+		t.Fatal("unsupported execution accepted")
+	}
+	after, err := os.ReadFile(filepath.Join(dir, "LIVE.json"))
+	if err != nil || !bytes.Equal(before, after) || !a.enabled() || a.profitOnly() != "" || len(st.Intents) != 0 {
+		t.Fatal("standing authorization changed on a pre-transport failure", err)
+	}
+	if err := pauseTrading(a, dir, "operator paused during preview"); err != nil {
+		t.Fatal(err)
+	}
+	// Even a stale status claiming live cannot bypass the durable halt.
+	if p.authorize(preview) == nil || a.enabled() {
+		t.Fatal("pause was overwritten by a live preview")
+	}
+	ready.Halted = true
+	if p.authorize(preview) == nil || a.enabled() {
+		t.Fatal("live preview silently converted into close-only activation")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "HALT")); err != nil {
+		t.Fatal("explicit pause lost", err)
+	}
+}
 
 func TestProfitControlAuthenticationAndBusy(t *testing.T) {
 	dir := t.TempDir()

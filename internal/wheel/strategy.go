@@ -38,13 +38,23 @@ func TradingWindow(now time.Time) bool {
 // Select uses the earliest listed eligible expiry. Failed liquidity checks do
 // not silently move to a later week. Calls use delta first, then time-value ROI.
 func Select(c Config, symbol, kind string, quotes []Quote, cost Cents, now time.Time) (Candidate, bool) {
-	return selectCandidate(c, symbol, kind, quotes, cost, now, true)
+	return selectCandidate(c, symbol, kind, quotes, cost, now, true, c.SymbolCollateralLimit())
+}
+
+// SelectFunded filters unaffordable puts before ranking. Plan and Execute still
+// recheck fresh cash; this scan-time amount is never a reservation.
+func SelectFunded(c Config, symbol, kind string, quotes []Quote, cost, available Cents, now time.Time) (Candidate, bool) {
+	return selectCandidate(c, symbol, kind, quotes, cost, now, true, c.EntryCashLimit(available))
 }
 
 // PreviewCandidate ignores quote age only for non-trading compatibility review.
 // Its timestamps are retained; Execute never accepts it without fresh re-selection.
 func PreviewCandidate(c Config, symbol, kind string, quotes []Quote, cost Cents, now time.Time) (Candidate, bool) {
-	return selectCandidate(c, symbol, kind, quotes, cost, now, false)
+	return selectCandidate(c, symbol, kind, quotes, cost, now, false, c.SymbolCollateralLimit())
+}
+
+func PreviewFunded(c Config, symbol, kind string, quotes []Quote, cost, available Cents, now time.Time) (Candidate, bool) {
+	return selectCandidate(c, symbol, kind, quotes, cost, now, false, c.EntryCashLimit(available))
 }
 
 // selectionModeFor resolves the active discipline without clamping legacy
@@ -72,7 +82,7 @@ func selectionModeFor(c Config) (SelectionMode, bool) {
 	}
 }
 
-func selectCandidate(c Config, symbol, kind string, quotes []Quote, cost Cents, now time.Time, requireFresh bool) (Candidate, bool) {
+func selectCandidate(c Config, symbol, kind string, quotes []Quote, cost Cents, now time.Time, requireFresh bool, collateralLimit Cents) (Candidate, bool) {
 	mode, ok := selectionModeFor(c)
 	if !ok {
 		return Candidate{}, false
@@ -118,7 +128,7 @@ func selectCandidate(c Config, symbol, kind string, quotes []Quote, cost Cents, 
 		if kind == "put" && (q.Delta >= 0 || delta < c.PutMinDelta || delta > c.PutMaxDelta || q.Strike >= q.Spot) {
 			continue
 		}
-		if kind == "put" && !FitsSymbolCollateral(q.Strike*100, c.Fee, c.SymbolCollateralLimit()) {
+		if kind == "put" && !FitsSymbolCollateral(q.Strike*100, c.Fee, collateralLimit) {
 			continue
 		}
 		if kind == "call" && (q.Delta <= 0 || delta < c.CallMinDelta || delta > c.CallMaxDelta || (!c.AllowBelowCost && q.Strike < cost)) {
@@ -312,7 +322,10 @@ func Plan(c Config, st State, s Snapshot, candidates []Candidate, now time.Time)
 		return cmp.Or(cmp.Compare(b.ReturnPerDay, a.ReturnPerDay), cmp.Compare(a.Symbol, b.Symbol))
 	})
 	cash := max(0, s.AvailableCash-c.Reserve)
-	budget := max(0, c.MaxCollateral-commitment)
+	budget := cash
+	if c.MaxCollateral > 0 {
+		budget = min(cash, max(0, c.MaxCollateral-commitment))
+	}
 	var out []Candidate
 	for _, a := range candidates {
 		if !slices.Contains(c.Symbols, a.Symbol) || busy[a.Symbol] || !fresh(a.At, now, c.MaxQuoteAgeSeconds) || !fresh(a.UnderlyingAt, now, c.MaxQuoteAgeSeconds) {

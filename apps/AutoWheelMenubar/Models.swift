@@ -251,6 +251,7 @@ struct ProfitPreview: Decodable {
     let closing_fee_cents: Int64
     let fee_allowance_cents: Int64
     let minimum_profit_cents: Int64
+    let continue_live: Bool
 }
 struct ProfitCandidate: Decodable {
     let symbol: String

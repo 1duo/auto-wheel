@@ -66,7 +66,7 @@ func (b *scanBroker) Quotes(ctx context.Context, _, _ string) ([]wheel.Quote, er
 func TestThreeScanWorkers(t *testing.T) {
 	c := wheel.DefaultConfig()
 	b := &scanBroker{}
-	_, failures := scan(t.Context(), c, wheel.NewState(), b)
+	_, failures := scan(t.Context(), c, wheel.NewState(), b, c.MaxCollateral)
 	if len(failures) != 0 || b.calls.Load() != int32(len(c.Symbols)) || b.maximum.Load() != 3 || b.active.Load() != 0 {
 		t.Fatalf("calls=%d maximum=%d active=%d failures=%d", b.calls.Load(), b.maximum.Load(), b.active.Load(), len(failures))
 	}
