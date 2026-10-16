@@ -289,6 +289,9 @@ type Quote struct {
 }
 
 type Candidate struct {
+	Closing     bool  `json:"closing,omitzero"`
+	CloseLimit  Cents `json:"close_limit_cents,omitzero"`
+	EntryCredit Cents `json:"entry_credit_cents,omitzero"`
 	Quote
 	NetPremium   Cents   `json:"net_premium_cents"`
 	Collateral   Cents   `json:"collateral_cents"`
@@ -329,6 +332,7 @@ type State struct {
 // Completed receipts survive expiration and call-away. History from another
 // writer must never be mistaken for this daemon's own terminal order.
 type OrderRecord struct {
+	Closing  bool      `json:"closing,omitzero"`
 	Ref      string    `json:"ref_id"`
 	Symbol   string    `json:"symbol"`
 	OptionID string    `json:"option_id"`
@@ -370,6 +374,12 @@ func (s State) Validate() error {
 		}
 	}
 	for symbol, in := range s.Intents {
+		if !in.Candidate.Closing && (in.Candidate.CloseLimit != 0 || in.Candidate.EntryCredit != 0) {
+			return errors.New("opening intent contains close terms")
+		}
+		if in.Candidate.Closing && (in.Candidate.Kind != "put" || in.Candidate.CloseLimit <= 0 || in.Candidate.CloseLimit > MaxMoney/100 || in.Candidate.EntryCredit <= 0 || in.Candidate.EntryCredit > MaxMoney) {
+			return errors.New("invalid close intent")
+		}
 		if symbol != in.Candidate.Symbol || in.Ref == "" || in.Candidate.ID == "" || in.Candidate.Strike <= 0 || in.Candidate.Strike > MaxMoney/100 || in.At.IsZero() {
 			return errors.New("invalid journal submission intent")
 		}

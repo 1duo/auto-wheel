@@ -78,6 +78,26 @@ final class WheelModel: ObservableObject {
             await refresh()
         } catch { notice = "Control outcome unconfirmed: \(error.localizedDescription). Refresh status before retrying." }
     }
+    func takeProfit(_ symbol: String) async {
+        guard connected, !busy, status?.halted == true, canEnableLive else { return }
+        busy = true; notice = nil
+        defer { busy = false; changed?() }
+        do {
+            let preview = try await api.profitPreview(symbol)
+            let c = preview.candidate
+            let alert = NSAlert()
+            alert.messageText = "Take profit on \(c.symbol)?"
+            alert.informativeText = "Buy to close 1 \(c.symbol) \(money(c.strike_cents)) put expiring \(c.expiry), using a day limit of \(money(c.close_limit_cents)) per share (\(money(c.close_limit_cents * 100)) per contract).\n\nQuoted closing fee: \(money(preview.closing_fee_cents)); maximum fee allowance: \(money(preview.fee_allowance_cents)). Estimated profit is at least \(money(preview.minimum_profit_cents)) after opening and closing fee allowances if filled.\n\nThe price is capped. One submission only. New entries stay paused; an accepted order may remain working."
+            alert.addButton(withTitle: "Buy to close 1 contract")
+            alert.addButton(withTitle: "Cancel")
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+            try await api.takeProfit(preview.id)
+            notice = "Close submitted for \(symbol). Trading is paused. Wait for broker reconciliation before the next action."
+        } catch {
+            notice = "Close not confirmed: \(error.localizedDescription). Refresh positions and intents before any further action; no request was repeated."
+        }
+        await refresh()
+    }
     func selectMode(_ mode: SelectionMode) async {
         guard connected, !busy, status?.config.selectionMode != nil else { return }
         busy = true; notice = nil

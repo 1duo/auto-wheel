@@ -35,6 +35,7 @@ type activationControl struct {
 }
 
 type activationRecord struct {
+	ProfitOnly       string    `json:"profit_only,omitempty"`
 	Release          string    `json:"release"`
 	ExecutableDigest string    `json:"executable_digest"`
 	ConfigDigest     string    `json:"config_digest"`
@@ -88,7 +89,12 @@ func (a *activationControl) enabled() bool {
 	return true
 }
 
-func (a *activationControl) enable() error {
+func (a *activationControl) enable() error { return a.enablePurpose("") }
+
+func (a *activationControl) enablePurpose(profitID string) error {
+	if profitID != "" && a.Config.CoordinatorSocket != "" {
+		return errors.New("shared account profit taking unsupported")
+	}
 	if err := tradePulseIsolation(a.Config, a.RetiredPeer); err != nil {
 		return err
 	}
@@ -104,7 +110,7 @@ func (a *activationControl) enable() error {
 			return err
 		}
 	}
-	err = aruntime.AtomicJSON(filepath.Join(a.Dir, "LIVE.json"), activationRecord{Release: version, ExecutableDigest: digest, ConfigDigest: configDigest(a.Config), At: time.Now(), CoordinatorEpoch: epoch})
+	err = aruntime.AtomicJSON(filepath.Join(a.Dir, "LIVE.json"), activationRecord{ProfitOnly: profitID, Release: version, ExecutableDigest: digest, ConfigDigest: configDigest(a.Config), At: time.Now(), CoordinatorEpoch: epoch})
 	if err != nil && a.Config.CoordinatorSocket != "" {
 		_, cleanup := sharedPermission(a.Config, false)
 		return errors.Join(err, cleanup)

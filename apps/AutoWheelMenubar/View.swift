@@ -88,6 +88,15 @@ struct WheelView: View {
                     .disabled(!model.connected || model.busy || (s.mode != "live" && !model.canEnableLive))
                     .help("Enable automated real orders under the configured limits. Switching off persists a pause; accepted orders continue.")
             }.padding(.horizontal, 14).padding(.vertical, 8)
+            ForEach((s.positions ?? [:]).keys.sorted(), id: \.self) { symbol in
+                if s.positions?[symbol]?.put_id != nil {
+                    actionRow("Take Profit · \(symbol)…", symbol: "checkmark.circle") {
+                        Task { await model.takeProfit(symbol) }
+                    }
+                    .disabled(!model.connected || model.busy || !s.halted || !model.canEnableLive)
+                    .help("Pause live trading first, then preview a capped buy-to-close order. New entries remain paused.")
+                }
+            }
             if let currentSelection = s.config.selectionMode {
                 HStack(spacing: 8) {
                     Label("Selection", systemImage: "arrow.triangle.2.circlepath")

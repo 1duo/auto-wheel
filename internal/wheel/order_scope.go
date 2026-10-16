@@ -44,12 +44,16 @@ func CheckOrderScope(c Config, st State, s Snapshot) error {
 		known := pending && ((in.OrderID != "" && in.OrderID == o.ID) || (in.OrderID == "" && in.Ref == o.Ref))
 		r, completed := st.CompletedOrders[o.ID]
 		if known {
-			r = OrderRecord{Ref: in.Ref, Symbol: o.Symbol, OptionID: in.Candidate.ID, At: in.At}
+			r = OrderRecord{Ref: in.Ref, Symbol: o.Symbol, OptionID: in.Candidate.ID, At: in.At, Closing: in.Candidate.Closing}
 		}
 		if !known && !completed {
 			return fmt.Errorf("%s option order not owned by AutoWheel; freeze", o.Symbol)
 		}
-		if o.Symbol != r.Symbol || o.OptionID != r.OptionID || o.Ref != "" && o.Ref != r.Ref || o.Side != "sell" || o.Effect != "open" || o.Quantity != 1 || o.Filled < 0 || o.Filled > 1 || o.CreatedAt.Before(r.At.Add(-2*time.Second)) || completed && !known && !o.Terminal() {
+		side, effect := "sell", "open"
+		if r.Closing {
+			side, effect = "buy", "close"
+		}
+		if o.Symbol != r.Symbol || o.OptionID != r.OptionID || o.Ref != "" && o.Ref != r.Ref || o.Side != side || o.Effect != effect || o.Quantity != 1 || o.Filled < 0 || o.Filled > 1 || o.CreatedAt.Before(r.At.Add(-2*time.Second)) || completed && !known && !o.Terminal() {
 			return errors.New("option order differs from durable AutoWheel ownership")
 		}
 	}

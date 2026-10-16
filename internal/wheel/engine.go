@@ -64,7 +64,8 @@ func Reconcile(st *State, s Snapshot, now time.Time) error {
 			return errors.New("submission ref_id missing or duplicated; operator investigation required")
 		}
 		o := matches[0]
-		if o.Symbol != symbol || o.OptionID != in.Candidate.ID || o.Side != "sell" || o.Effect != "open" || o.Quantity != 1 || o.Filled < 0 || o.Filled > 1 {
+		side, effect, _, _ := in.Candidate.OrderTerms()
+		if o.Symbol != symbol || o.OptionID != in.Candidate.ID || o.Side != side || o.Effect != effect || o.Quantity != 1 || o.Filled < 0 || o.Filled > 1 {
 			return errors.New("broker order differs from durable intent")
 		}
 		if in.OrderID != "" && (o.ID != in.OrderID || o.Ref != "" && o.Ref != in.Ref) {
@@ -76,7 +77,28 @@ func Reconcile(st *State, s Snapshot, now time.Time) error {
 		if s.OrderCoveragePolicy == "exclusive_standard" && (o.ID == "" || len(st.CompletedOrders) >= 1024) {
 			return errors.New("completed order ownership cannot be retained; freeze")
 		}
-		if o.Filled == 1 {
+		if o.Filled == 1 && in.Candidate.Closing {
+			p := st.Positions[symbol]
+			if p.PutID != in.Candidate.ID || p.OwnedShares != 0 || p.CallID != "" {
+				return errors.New("close fill ownership mismatch")
+			}
+			for _, h := range s.Shares {
+				if h.Symbol == symbol && h.Quantity != 0 {
+					return errors.New("close fill overlaps assignment inventory; freeze")
+				}
+			}
+			stillOpen := false
+			for _, op := range s.Options {
+				if op.Symbol == symbol {
+					stillOpen = true
+				}
+			}
+			// Wait for broker position reporting; never free the slot early.
+			if stillOpen {
+				continue
+			}
+			delete(st.Positions, symbol)
+		} else if o.Filled == 1 {
 			p := st.Positions[symbol]
 			if in.Candidate.Kind == "put" {
 				p.PutID = in.Candidate.ID
@@ -98,7 +120,7 @@ func Reconcile(st *State, s Snapshot, now time.Time) error {
 			if st.CompletedOrders == nil {
 				st.CompletedOrders = map[string]OrderRecord{}
 			}
-			st.CompletedOrders[o.ID] = OrderRecord{Ref: in.Ref, Symbol: symbol, OptionID: in.Candidate.ID, At: in.At}
+			st.CompletedOrders[o.ID] = OrderRecord{Ref: in.Ref, Symbol: symbol, OptionID: in.Candidate.ID, At: in.At, Closing: in.Candidate.Closing}
 		}
 		delete(st.Intents, symbol)
 	}
@@ -287,6 +309,12 @@ func Execute(ctx context.Context, c Config, st *State, store Store, b Broker, a 
 	if !fresh(a.At, now(), c.MaxQuoteAgeSeconds) || !fresh(a.UnderlyingAt, now(), c.MaxQuoteAgeSeconds) || !fresh(s.At, now(), c.MaxQuoteAgeSeconds) || !TradingWindow(now()) {
 		return errors.New("pre-submit data expired during review")
 	}
+	return persistAndSubmit(ctx, c, st, store, b, a, s, now)
+}
+
+func persistAndSubmit(ctx context.Context, c Config, st *State, store Store, b interface {
+	Submit(context.Context, Candidate, string) (string, error)
+}, a Candidate, s Snapshot, now func() time.Time) error {
 	ref, err := newRef()
 	if err != nil {
 		return err

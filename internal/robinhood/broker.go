@@ -684,7 +684,8 @@ func (b *Broker) Quotes(ctx context.Context, symbol, kind string) ([]wheel.Quote
 }
 
 func (b *Broker) orderArgs(a wheel.Candidate) object {
-	return object{"account_number": b.Config.Account, "legs": []object{{"option_id": a.ID, "side": "sell", "position_effect": "open", "ratio_quantity": 1}}, "quantity": "1", "price": a.Bid.Dollars(), "type": "limit", "time_in_force": "gfd", "market_hours": "regular_hours"}
+	side, effect, _, limit := a.OrderTerms()
+	return object{"account_number": b.Config.Account, "legs": []object{{"option_id": a.ID, "side": side, "position_effect": effect, "ratio_quantity": 1}}, "quantity": "1", "price": limit.Dollars(), "type": "limit", "time_in_force": "gfd", "market_hours": "regular_hours"}
 }
 
 func (b *Broker) preview(ctx context.Context, a wheel.Candidate) (object, error) {
@@ -705,7 +706,8 @@ func (b *Broker) preview(ctx context.Context, a wheel.Candidate) (object, error)
 }
 
 func reviewIdentity(o object, account string, a wheel.Candidate) error {
-	if text(o, "account_number") != account || text(o, "direction") != "credit" || text(o, "type") != "limit" || text(o, "time_in_force") != "gfd" || text(o, "market_hours") != "regular_hours" {
+	side, effect, direction, limit := a.OrderTerms()
+	if text(o, "account_number") != account || text(o, "direction") != direction || text(o, "type") != "limit" || text(o, "time_in_force") != "gfd" || text(o, "market_hours") != "regular_hours" {
 		return errors.New("review account or order type mismatch")
 	}
 	q, err := integer(o, "quantity")
@@ -713,7 +715,7 @@ func reviewIdentity(o object, account string, a wheel.Candidate) error {
 		return errors.New("review quantity mismatch")
 	}
 	price, err := money(o, "price")
-	if err != nil || price != a.Bid {
+	if err != nil || price != limit {
 		return errors.New("review limit price mismatch")
 	}
 	legs, ok := o["legs"].([]any)
@@ -725,7 +727,7 @@ func reviewIdentity(o object, account string, a wheel.Candidate) error {
 		return errors.New("invalid review leg")
 	}
 	ratio, err := integer(leg, "ratio_quantity")
-	if err != nil || ratio != 1 || text(leg, "option_id") != a.ID || text(leg, "side") != "sell" || text(leg, "position_effect") != "open" {
+	if err != nil || ratio != 1 || text(leg, "option_id") != a.ID || text(leg, "side") != side || text(leg, "position_effect") != effect {
 		return errors.New("review contract or leg mismatch")
 	}
 	return nil
@@ -788,8 +790,15 @@ func validateReview(o object, c wheel.Config, a wheel.Candidate, requireFresh bo
 	if !ok || text(collateral, "account_number") != c.Account {
 		return errors.New("review collateral account mismatch")
 	}
+	cashDirection := "debit"
+	if a.Closing {
+		if a.Kind != "put" || a.CloseLimit <= 0 || a.CloseLimit > wheel.MaxMoney/100 {
+			return errors.New("unsupported close review")
+		}
+		cashDirection = "credit"
+	}
 	cash, ok := collateral["cash"].(object)
-	if !ok || cash["infinite"] != false || text(cash, "direction") != "debit" {
+	if !ok || cash["infinite"] != false || text(cash, "direction") != cashDirection {
 		return errors.New("unlimited or unexpected collateral change")
 	}
 	amount, err := money(cash, "amount")
@@ -837,8 +846,14 @@ func validateReview(o object, c wheel.Config, a wheel.Candidate, requireFresh bo
 	if requireFresh {
 		age := time.Since(at)
 		bid, err := money(q, "bid_price")
-		if err != nil || bid < a.Bid || age < -2*time.Second || age > time.Duration(c.MaxQuoteAgeSeconds)*time.Second {
-			return errors.New("review quote stale or bid below limit")
+		validPrice := err == nil && bid >= a.Bid
+		if a.Closing {
+			ask, aerr := money(q, "ask_price")
+			size, serr := integer(q, "ask_size")
+			validPrice = aerr == nil && serr == nil && ask > 0 && ask <= a.CloseLimit && size > 0
+		}
+		if !validPrice || age < -2*time.Second || age > time.Duration(c.MaxQuoteAgeSeconds)*time.Second {
+			return errors.New("review quote stale or outside limit")
 		}
 	}
 	return nil
@@ -868,6 +883,9 @@ func (b *Broker) SubmitEvidence(ctx context.Context, a wheel.Candidate, ref stri
 	args := b.orderArgs(a)
 	args["ref_id"] = ref
 	if b.SubmitProvider != nil {
+		if a.Closing {
+			return "", nil, wheel.ErrNotSubmitted
+		}
 		id, err := b.SubmitProvider(ctx, a, ref)
 		return id, nil, err
 	}
@@ -904,6 +922,7 @@ func (b *Broker) RecoverReceipt(ctx context.Context, a wheel.Candidate, id strin
 // broker receipt does not echo account/ref_id; its ID and exact order fields
 // bind it to the durable intent. Missing/ambiguous responses retain that intent.
 func receipt(v any, a wheel.Candidate) (string, error) {
+	side, effect, direction, limit := a.OrderTerms()
 	data, err := single(v)
 	if err != nil {
 		return "", err
@@ -917,12 +936,12 @@ func receipt(v any, a wheel.Candidate) (string, error) {
 		return "", errors.New("receipt quantity mismatch")
 	}
 	price, err := money(o, "price")
-	if err != nil || price != a.Bid {
+	if err != nil || price != limit {
 		return "", errors.New("receipt price mismatch")
 	}
 	premium, perr := money(o, "premium")
 	mult, err := integer(o, "trade_value_multiplier")
-	if perr != nil || premium != a.Bid*100 || err != nil || mult != 100 || text(o, "id") == "" || text(o, "chain_symbol") != a.Symbol || (a.ChainID != "" && text(o, "chain_id") != a.ChainID) || text(o, "direction") != "credit" || text(o, "type") != "limit" || text(o, "trigger") != "immediate" || text(o, "time_in_force") != "gfd" || text(o, "market_hours") != "regular_hours" || text(o, "state") == "" {
+	if perr != nil || premium != limit*100 || err != nil || mult != 100 || text(o, "id") == "" || text(o, "chain_symbol") != a.Symbol || (a.ChainID != "" && text(o, "chain_id") != a.ChainID) || text(o, "direction") != direction || text(o, "type") != "limit" || text(o, "trigger") != "immediate" || text(o, "time_in_force") != "gfd" || text(o, "market_hours") != "regular_hours" || text(o, "state") == "" {
 		return "", errors.New("receipt identity or order mismatch")
 	}
 	created, cerr := timestamp(o, "created_at")
@@ -939,7 +958,7 @@ func receipt(v any, a wheel.Candidate) (string, error) {
 	}
 	strike, err := money(leg, "strike_price")
 	ratio, rerr := integer(leg, "ratio_quantity")
-	if err != nil || rerr != nil || ratio != 1 || optionID(leg) != a.ID || text(leg, "side") != "sell" || text(leg, "position_effect") != "open" || text(leg, "option_type") != a.Kind || strike != a.Strike || text(leg, "expiration_date") != a.Expiry {
+	if err != nil || rerr != nil || ratio != 1 || optionID(leg) != a.ID || text(leg, "side") != side || text(leg, "position_effect") != effect || text(leg, "option_type") != a.Kind || strike != a.Strike || text(leg, "expiration_date") != a.Expiry {
 		return "", errors.New("receipt contract mismatch")
 	}
 	return text(o, "id"), nil

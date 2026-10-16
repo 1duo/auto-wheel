@@ -33,6 +33,7 @@ func operatorStatus(s status, c wheel.Config, token, dir string) status {
 }
 
 type operatorFeatures struct {
+	Profit     *profitControl
 	Activation *activationControl
 	SubmitMu   *sync.Mutex
 }
@@ -69,6 +70,10 @@ func operatorAPI(read func() status, mode, dir string, wake chan<- struct{}, fea
 	}
 	mux.HandleFunc("GET /status", serveStatus)
 	mux.HandleFunc("GET /readyz", serveStatus)
+	if len(features) == 1 && features[0].Profit != nil {
+		features[0].Profit.read = read
+		features[0].Profit.register(mux, dir)
+	}
 	var localControls sync.Mutex
 	controls := &localControls
 	var activation *activationControl
@@ -83,6 +88,10 @@ func operatorAPI(read func() status, mode, dir string, wake chan<- struct{}, fea
 		defer controls.Unlock()
 		if !nativeControlRequest(r, dir) {
 			http.Error(w, "native operator request required", http.StatusForbidden)
+			return
+		}
+		if len(features) == 1 && features[0].Profit != nil && features[0].Profit.busy.Load() {
+			http.Error(w, "close action in progress", http.StatusConflict)
 			return
 		}
 		if activation == nil {
@@ -118,6 +127,10 @@ func operatorAPI(read func() status, mode, dir string, wake chan<- struct{}, fea
 			defer controls.Unlock()
 			if !nativeControlRequest(r, dir) {
 				http.Error(w, "native operator request required", http.StatusForbidden)
+				return
+			}
+			if action != "halt" && len(features) == 1 && features[0].Profit != nil && features[0].Profit.busy.Load() {
+				http.Error(w, "close action in progress", http.StatusConflict)
 				return
 			}
 			if pending.Load() != nil && action != "halt" {

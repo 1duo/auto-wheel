@@ -27,6 +27,13 @@ struct OperatorAPI {
     func control(_ action: OperatorAction) async throws {
         _ = try await request("/control/\(action.rawValue)", post: true)
     }
+    func profitPreview(_ symbol: String) async throws -> ProfitPreview {
+        let data = try await request("/control/profit-preview/\(symbol)", post: true)
+        return try JSONDecoder().decode(ProfitPreview.self, from: data)
+    }
+    func takeProfit(_ previewID: String) async throws {
+        _ = try await request("/control/take-profit/\(previewID)", post: true)
+    }
     func selection(_ mode: SelectionMode) async throws {
         _ = try await request("/control/selection/\(mode.rawValue)", post: true)
     }

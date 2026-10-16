@@ -243,3 +243,19 @@ func age(_ text: String, now: Date = Date()) -> String {
     if seconds < 86400 { return "\(seconds / 3600)h ago" }
     return "\(seconds / 86400)d ago"
 }
+
+struct ProfitPreview: Decodable {
+    let id: String
+    let expires_at: String
+    let candidate: ProfitCandidate
+    let closing_fee_cents: Int64
+    let fee_allowance_cents: Int64
+    let minimum_profit_cents: Int64
+}
+struct ProfitCandidate: Decodable {
+    let symbol: String
+    let expiry: String
+    let strike_cents: Int64
+    let close_limit_cents: Int64
+    let entry_credit_cents: Int64
+}

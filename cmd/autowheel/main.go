@@ -260,6 +260,7 @@ func run() error {
 	var readiness *liveReadiness
 	activation := &activationControl{Capable: *liveCapable, Config: c, Dir: *stateDir, RetiredPeer: retired}
 	var submitMu sync.Mutex
+	var cycleMu sync.Mutex
 	if *live {
 		return errors.New("use --live-capable and the readiness-gated native switch")
 	}
@@ -278,6 +279,16 @@ func run() error {
 		slog.Info("cycle", "mode", s.Mode, "stage", s.Stage, "reason", s.Reason, "candidates", len(s.Candidates))
 	}
 	cycle := func() error {
+		cycleMu.Lock()
+		defer cycleMu.Unlock()
+		if activation.profitOnly() != "" {
+			submitMu.Lock()
+			err := pauseTrading(activation, *stateDir, "close-only session ended; fresh operator action required")
+			submitMu.Unlock()
+			if err != nil {
+				return err
+			}
+		}
 		s := status{Version: version, Mode: mode, Stage: "idle", At: time.Now(), Positions: st.Positions}
 		if activation.Capable {
 			if c.CoordinatorSocket != "" {
@@ -337,7 +348,7 @@ func run() error {
 			if err := activation.fenceIsolation(); err != nil {
 				return err
 			}
-			if !activation.enabled() {
+			if !activation.enabled() || activation.profitOnly() != "" {
 				return errors.New("live activation absent or invalid before submission")
 			}
 			if _, err := os.Lstat(filepath.Join(*stateDir, "HALT")); !errors.Is(err, os.ErrNotExist) {
@@ -511,7 +522,8 @@ func run() error {
 		}
 		return s
 	}
-	mux := operatorAPI(readStatus, mode, *stateDir, wake, operatorFeatures{Activation: activation, SubmitMu: &submitMu})
+	profit := &profitControl{activation: activation, config: c, token: *token, state: &st, store: j, cycleMu: &cycleMu, submitMu: &submitMu, read: readStatus, wake: wake}
+	mux := operatorAPI(readStatus, mode, *stateDir, wake, operatorFeatures{Activation: activation, SubmitMu: &submitMu, Profit: profit})
 	server := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 40 * time.Second, IdleTimeout: 30 * time.Second}
 	serverErr := make(chan error, 1)
 	go func() { serverErr <- server.Serve(listener) }()
