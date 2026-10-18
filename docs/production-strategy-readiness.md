@@ -1,5 +1,37 @@
 # Research candidates to production
 
+## Conservative early-profit experiment, October 18
+
+The [TP evaluation](conservative-take-profit-evaluation-20261018.json) holds the
+current conservative entries, annual rosters, $200,000 account limit and cash
+controls fixed. It tests 50%, 75% and 90% net-credit capture, for puts only and
+for both option types. New entries retain the weekly clock and settlement
+fences. A covered-call buyback retains the underlying stock risk.
+
+TP75 on both option types is the best tested TP tradeoff. At the 54.1% stress
+tax scenario, full-history liquidation return / sampled after-tax marked DD is
+21.17% / 15.63%, versus hold 19.44% / 14.69%. Fresh 2023–2025 improves return to
+10.24% from 7.03%, but DD rises to 14.85% from 9.09%. The fresh return/DD ratio
+falls about 10.8%. No tested TP profile improves the paired risk-adjusted result
+across both histories and all four tax scenarios. Keep the current hold policy.
+
+Faster realized wins change the next put strike and inventory path. Fresh TP75
+makes 119 put openings versus hold 76, yet the April 2025 trough includes AMD
+acquired at $175 versus hold $125. Fewer put assignments and zero losing
+completed stock cycles do not establish lower risk. Retained stock losses,
+open option losses, tax cash timing and the full drawdown path remain relevant.
+
+The bounded study admits 36 cases: 33 complete with independent sampled-source,
+financial, decision, availability and tax checks, and three source-stopped
+cost sensitivities. Both hold compatibilities and four candidate reproductions
+match byte for byte. The unscored paths need the XOM June 21, 2024 $105 put
+quotes at 15:29 and 15:30; the cached 15:34 quote cannot supply those prices.
+They remain unscored and restrict robustness confidence. No new data request,
+price substitution, automatic replay retry or production financial change was
+made. Overlapping inspected histories and actual contract/action/fee/broker
+execution qualification remain conditional research evidence.
+
+
 ## Tax evaluation and the authorized capital change, October 18
 
 The [current evaluation summary](strategy-tax-capital-evaluation-20261018.json)
