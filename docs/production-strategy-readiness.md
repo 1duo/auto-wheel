@@ -1,6 +1,6 @@
 # Research candidates to production
 
-The October 18 request starts a production preparation phase. The historical
+The latest request starts a production preparation phase (October 18 UTC checkpoint). The historical
 results justify engineering and a bounded launch evaluation. They do not prove
 future returns, a future completed-loss probability, or live execution fidelity.
 Preserve every historical result and rejection; do not rewrite the old screens.
@@ -64,6 +64,13 @@ cannot trigger a search for a nicer historical fill. The new contract kernel
 and historical parity command are the first implemented bridge components.
 They are not connected to live order submission yet.
 
+Select at the signal clock and refresh that same identity before execution.
+The historical account does not replace its signal contract when the stock
+midpoint moves during the execution delay. `RefreshFixedIdentity` now enforces
+that distinction, including exact metadata and listed-expiration checks.
+Its six targeted scenarios cover a moved stock price, changed or duplicated
+metadata, a missing expiration, zero bid and a stale stock-side timestamp.
+
 A read-only probe has confirmed that the official broker exposes underlying
 bid/ask prices with separate `venue_bid_time` and `venue_ask_time`, plus listed
 chain expirations. That removes a source-format uncertainty. Weekend samples
@@ -94,6 +101,26 @@ cover stale/missing side clocks, zero chosen liquidity, conflicting identities,
 duplicate identities/expirations, unknown cash deliverables and denial of
 non-market operations. The legacy quote/deliverable check still passes.
 
+The adapter now checks the underlying spread as well as the option spread.
+That corrects the bridge to the existing research rule; it does not alter any
+saved financial path. Both use a maximum 15% spread relative to midpoint.
+
+The current Go 1.27.2 verifier matches all 21,270 contract choices and 18,858
+admission checks across the six full-history/forward shortlist paths: 9,953
+unique consulted book pairs, 969 call-floor checks, 1,013 reviewed weekly entry
+dates in 2024–2026, and 6,923 funding checks. Funding includes actual filled-entry
+frames and one-cent counterfactual boundaries; this does not claim that the
+native controller has reproduced every rejected funding attempt. The original
+decision audits were reconstructed for all six saved paths, including their
+rejected opportunities. Eight targeted Linux Go checks pass. Overlapping paths
+and repeated economic inputs are not independent statistical observations.
+
+The first admission-audit attempt stopped at its one-million-input guard while
+reading unrelated quote rows. The retained second attempt checks the books
+actually consulted by every saved decision, without deleting required dates,
+positions or rejections. No new financial case, replay or provider request was
+needed for these comparisons.
+
 The frozen 2026 opening cohort is AMD, ORCL, INTC, CRM, BAC, XOM, WMT, BA,
 JNJ and CVX. Keep its source hash and stock-only selection origin. A live
 quote failure skips a symbol; it does not authorize a new ROI-based universe.
@@ -103,8 +130,8 @@ quote failure skips a symbol; it does not authorize a new ROI-based universe.
 The following are actual integration requirements, not reasons to run another
 parameter search:
 
-1. Connect the contract kernel to the broker's complete eligible identity menu
-   and to pre-submission reselection. Use exact underlying bid/ask prices and
+1. Connect signal-time selection and refresh of the same contract to the native
+   controller. Use the broker's complete eligible identity menu, exact underlying bid/ask prices and
    both side timestamps. Preserve the research spread rule and check current
    positive displayed size, supported tick, standard deliverable and permission.
 2. Preserve the original entry/reentry cadence and opening rules. Compare
@@ -112,6 +139,12 @@ parameter search:
    funding and callaway accounting independently reconciled. Historical modeled
    65-cent option fees and $1 physical fees are assumptions; live broker fees
    require an actual price or a declared bounded budget, never a historical-fee label.
+   Signal 31 minutes before the actual regular close on the first reviewed
+   session of the ISO week; primary execution is one minute later. The five-minute
+   sensitivity is an outer execution-delay boundary, not permission for repeated
+   decisions. Preserve a single signal cohort across execution and restarts.
+   Managed symbols precede new entries in alphabetical order; new symbols follow
+   the frozen stock-only roster order. Do not rank the new policy by option ROI.
 3. Reconstruct the exact acquisition basis and fee treatment for the stock-cost
    call floor. A broker average share price is not automatically the model's
    gross acquisition basis. The floor protects the modeled stock-sale leg,
@@ -122,12 +155,21 @@ parameter search:
    Do not silently restore or remove the installed legacy entry cap: its current
    zero fixed ceiling is a different policy from the historical $80,000 ceiling,
    $26,666.66 per-symbol budget and $16,809.44 reserve.
+   Opening fees need free cash. They are not added to a put's strike exposure
+   when applying the research allocation limit. The new `CanOpen` checks that
+   distinction and removes existing holds exactly once. Calls also fund their
+   fee from existing cash; expected new premium is not available funding.
 5. Protect the three existing AutoWheel lifecycles, observed in AVGO, HOOD and
    MSTR. The simple migration is to keep their installed management semantics
    until broker-confirmed flatness, then switch opening policy. Do not adopt
    those positions into the research cohort, discard unresolved expiry evidence,
    force liquidation or apply a new TP rule to them. More complicated in-flight
    policy migration is unnecessary for P1.
+   Bind the new policy and cost evidence to its journal while flat. Its weekly
+   signal queue needs a persistent consumed/expired state; a restart cannot
+   create a fresh signal from a later price. Do not weaken the unknown-submission
+   fence to make the queue advance. Handling multiple confirmed broker working
+   orders requires separate ownership/cash evidence and a targeted check.
 6. Preserve the verified native TradePulse retirement, its persistent service
    mask, account binding, lifetime lock and restricted standard-order coverage
    warning. Native readiness observed for the old policy is not approval of a
@@ -170,10 +212,23 @@ recovery. Assess those events and risk before expanding capital or modes.
 The earlier 60-session proposal is evidence collection, not an automatic
 activation gate or a substitute for enough completed stock cycles.
 
+Public fee review on October 18 UTC confirms that the research's 65-cent option
+and $1 physical charges are modeled costs. Robinhood separately publishes zero
+exercise/assignment commissions, regulatory charges, and a professional-customer
+option charge. Its help page describes a fourth-quarter TAF suspension while
+the fee PDF lists ordinary TAF rates. Retain both; use broker review or a declared
+conservative budget, rather than choosing the lowest published amount or
+assuming the account's classification. Zero exercise commission does not prove
+zero all-in stock-sale cost. [Options fees](https://robinhood.com/us/en/support/articles/360001214663/),
+[trading-fee help](https://robinhood.com/us/en/support/articles/trading-fees-on-robinhood/),
+[fee schedule](https://cdn.robinhood.com/assets/robinhood/legal/RHF%20Fee%20Schedule.pdf).
+
 At this checkpoint the source baseline, read-only probe, contract kernel,
-21,270 matching frozen selector decisions and real paginated market observation
-are implemented and verified. P1 gate 1's source/menu portion is complete;
-its native pre-submit and account deliverable portions remain open, along with
+21,270 matching frozen selector decisions, 18,858 admission comparisons, weekly
+clock calculation, exact-identity refresh and real paginated market observation
+are implemented and verified. P1's source/menu and arithmetic components are
+complete. Native controller, durable policy/basis and signal-queue integration,
+account deliverable review, and the release/recovery portions remain open, along with
 the remaining numbered integration gates. No installed production software or
 configuration was changed or activated. Source code changes are isolated in the
 managed worktree.

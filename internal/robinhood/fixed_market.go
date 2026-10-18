@@ -23,6 +23,7 @@ type FixedMarketObservation struct {
 	BidAt             time.Time                `json:"underlying_bid_at"`
 	AskAt             time.Time                `json:"underlying_ask_at"`
 	MenuContracts     int                      `json:"menu_contracts"`
+	IdentityRefresh   bool                     `json:"identity_refresh"`
 	Choice            *contractpolicy.Contract `json:"choice,omitzero"`
 	Option            contractpolicy.Book      `json:"option_book"`
 	OptionAt          time.Time                `json:"option_at,omitzero"`
@@ -38,6 +39,17 @@ type FixedMarketObservation struct {
 // ObserveFixedPolicy performs only get_* reads. Missing books are not replaced,
 // Greek/OI values are not needed or invented, and no broker review is performed.
 func (b *Broker) ObserveFixedPolicy(ctx context.Context, mode, kind, symbol string, clock func() time.Time) (FixedMarketObservation, error) {
+	return b.fixedMarket(ctx, mode, kind, symbol, nil, clock)
+}
+
+// RefreshFixedIdentity refreshes the signal's exact contract. It never chooses
+// another strike from the execution-time spot. The caller still needs the
+// original signal, cadence, account, floor, funding and broker-review gates.
+func (b *Broker) RefreshFixedIdentity(ctx context.Context, mode string, chosen contractpolicy.Contract, clock func() time.Time) (FixedMarketObservation, error) {
+	return b.fixedMarket(ctx, mode, chosen.Kind, chosen.Symbol, &chosen, clock)
+}
+
+func (b *Broker) fixedMarket(ctx context.Context, mode, kind, symbol string, pinned *contractpolicy.Contract, clock func() time.Time) (FixedMarketObservation, error) {
 	var out FixedMarketObservation
 	if clock == nil {
 		return out, errors.New("fixed policy needs an observation clock")
@@ -46,6 +58,13 @@ func (b *Broker) ObserveFixedPolicy(ctx context.Context, mode, kind, symbol stri
 	// Validate the policy and symbol before making a provider request.
 	if _, err := contractpolicy.Choose(mode, kind, day, symbol, contractpolicy.Book{Bid: 100, Ask: 100}, nil); err != nil {
 		return out, err
+	}
+	if pinned != nil {
+		expiry, err := time.Parse(time.DateOnly, pinned.Expiry)
+		if pinned.ID == "" || pinned.Strike <= 0 || pinned.Strike > int64(wheel.MaxMoney/100) ||
+			err != nil || expiry.Format(time.DateOnly) != pinned.Expiry {
+			return out, errors.New("invalid fixed-policy refresh identity")
+		}
 	}
 	chains, err := b.collection(ctx, "get_option_chains", object{"underlying_symbol": symbol}, "chains")
 	if err != nil {
@@ -90,7 +109,7 @@ func (b *Broker) ObserveFixedPolicy(ctx context.Context, mode, kind, symbol stri
 	if err != nil {
 		return out, err
 	}
-	out = FixedMarketObservation{Day: day, Mode: mode, Kind: kind, Symbol: symbol, Stock: contractpolicy.Book{Bid: int64(bid), Ask: int64(ask)}, Structural100: true}
+	out = FixedMarketObservation{Day: day, Mode: mode, Kind: kind, Symbol: symbol, Stock: contractpolicy.Book{Bid: int64(bid), Ask: int64(ask)}, Structural100: true, IdentityRefresh: pinned != nil}
 	if out.BidAt, err = timestamp(stocks[0], "venue_bid_time"); err != nil {
 		return out, err
 	}
@@ -120,11 +139,28 @@ func (b *Broker) ObserveFixedPolicy(ctx context.Context, mode, kind, symbol stri
 		}
 	}
 	if len(wanted) == 0 {
+		if pinned != nil {
+			return out, errors.New("signal contract expiration is no longer listed")
+		}
 		out.At = clock()
 		return out, nil
 	}
 	slices.Sort(wanted)
-	meta, err := b.collection(ctx, "get_option_instruments", object{"chain_id": text(chain, "id"), "expiration_dates": strings.Join(wanted, ","), "type": kind, "state": "active"}, "instruments")
+	args := object{"chain_id": text(chain, "id"), "expiration_dates": strings.Join(wanted, ","), "type": kind, "state": "active"}
+	if pinned != nil {
+		if !slices.Contains(wanted, pinned.Expiry) {
+			return out, errors.New("signal contract expiration no longer eligible or listed")
+		}
+		switch {
+		case b.MCP.Supports("get_option_instruments", "ids"):
+			args = object{"ids": pinned.ID}
+		case b.MCP.Supports("get_option_instruments", "option_ids"):
+			args = object{"option_ids": []string{pinned.ID}}
+		default:
+			return out, errors.New("MCP lacks exact signal-contract lookup")
+		}
+	}
+	meta, err := b.collection(ctx, "get_option_instruments", args, "instruments")
 	if err != nil {
 		return out, err
 	}
@@ -143,7 +179,14 @@ func (b *Broker) ObserveFixedPolicy(ctx context.Context, mode, kind, symbol stri
 		menu = append(menu, contractpolicy.Contract{ID: op.ID, Symbol: op.Symbol, Kind: op.Kind, Expiry: op.Expiry, Strike: int64(op.Strike)})
 	}
 	out.MenuContracts = len(menu)
-	out.Choice, err = contractpolicy.Choose(mode, kind, day, symbol, out.Stock, menu)
+	if pinned == nil {
+		out.Choice, err = contractpolicy.Choose(mode, kind, day, symbol, out.Stock, menu)
+	} else {
+		if len(menu) != 1 || menu[0] != *pinned {
+			return out, errors.New("signal contract metadata changed or lookup ambiguous")
+		}
+		out.Choice = new(*pinned)
+	}
 	if err != nil || out.Choice == nil {
 		out.At = clock()
 		return out, err
@@ -203,7 +246,7 @@ func (b *Broker) ObserveFixedPolicy(ctx context.Context, mode, kind, symbol stri
 			age >= -2*time.Second && age <= time.Duration(b.Config.MaxQuoteAgeSeconds)*time.Second
 	}
 	out.MarketFresh = fresh(out.BidAt) && fresh(out.AskAt) && fresh(out.OptionAt)
-	out.EntryBookUsable = bid > 0 && ask > 0 && out.BidSize >= 1 &&
-		int64(ask-bid)*20000 <= 1500*int64(ask+bid) && text(chosen, "tradability") == "tradable" && text(chosen, "state") == "active"
+	out.EntryBookUsable = contractpolicy.EntryBookUsable(out.Stock) && contractpolicy.EntryBookUsable(out.Option) &&
+		out.BidSize >= 1 && text(chosen, "tradability") == "tradable" && text(chosen, "state") == "active"
 	return out, nil
 }
