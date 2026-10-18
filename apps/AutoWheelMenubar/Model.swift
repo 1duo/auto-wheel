@@ -79,7 +79,7 @@ final class WheelModel: ObservableObject {
         } catch { notice = "Control outcome unconfirmed: \(error.localizedDescription). Refresh status before retrying." }
     }
     func takeProfit(_ symbol: String) async {
-        guard connected, !busy, canEnableLive, status?.halted == true || status?.mode == "live" else { return }
+        guard connected, !busy, status?.config.fixed_policy == nil, canEnableLive, status?.halted == true || status?.mode == "live" else { return }
         busy = true; notice = nil
         defer { busy = false; changed?() }
         do {
@@ -149,6 +149,11 @@ final class WheelModel: ObservableObject {
         }
     }
     func openGuide() {
+        if status?.config.fixed_policy != nil {
+            selectedTab = 1
+            changed?()
+            return
+        }
         let path = Bundle.main.path(forResource: "guide", ofType: "html")
         if let path { NSWorkspace.shared.open(URL(fileURLWithPath: path)) }
     }
