@@ -13,6 +13,9 @@ const StandardOrderWarning = "Restricted standard orders only. Advanced/OCO visi
 // explicitly selected policy uses observed standard activity and cash/stock
 // availability, rather than labelling partial order coverage as complete.
 func CheckOrderScope(c Config, st State, s Snapshot) error {
+	if st.Fixed != nil {
+		return errors.New("fixed-policy journal requires its qualified native controller; legacy execution is fenced")
+	}
 	if c.OrderCoveragePolicy != "exclusive_standard" {
 		if s.OrderCoveragePolicy == "exclusive_standard" {
 			return errors.New("restricted order snapshot cannot satisfy full coverage policy")

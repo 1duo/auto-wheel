@@ -195,6 +195,40 @@ preset. They can use the same contract kernel during read-only integration.
 
 ## Evidence and launch labels
 
+The conservative journal/queue layer is now implemented. It stores a versioned
+policy binding in the existing atomic account journal and permits its initial
+binding only when old journal lifecycles, broker inventory and working orders
+are flat. A capture reservation precedes provider reads. Each original signal
+is then either durably prepared or explicitly abstained, sealed once and claimed
+at most once in frozen roster order. An invalid first observation cannot be
+replaced by a later favorable quote. Interrupted capture retains only choices
+already durable; missing entries become abstentions. Expiry never cancels an
+order already accepted by the broker. Unknown submissions still freeze claims.
+
+Covered-call signal records retain an acquisition ceiling from the reconciled
+own put-assignment price plus the policy-bound physical fee allowance. A second
+allowance covers call-away in the floor test. This is explicitly a declared fee
+ceiling, not an actual paid-fee/realized-PnL record; it cannot appropriate an old
+lot or offset acquisition cost with premiums/dividends. Both the signal and
+execution gates must remain positive after the declared option-fee allowance.
+Fee budgets can make operational eligibility stricter than the historical
+modeled fees. Historical returns are not a current native-engine replay claim.
+
+Completed weekly cohorts are archived immutably before the next cohort replaces
+them; corruption or an archive failure prevents replacement. Journal saves are
+bounded to the existing 1 MiB restart read limit. New code reads legacy journals
+with no fixed binding, while an old strict parser rejects a nonempty new binding.
+The legacy order path is also explicitly fenced for a bound fixed journal.
+Rollback must therefore use a reader compatible with this versioned schema and
+remain paused; stripping the binding or forcing an older reader is not rollback.
+
+These transitions are called by the serialized account controller. Source reads
+may run in parallel, but journal updates remain serialized. This layer has no
+broker submission capability. Timed daemon wiring, current broker reconciliation,
+native pre-submit cash/ownership/deliverable review, and the full order/recovery
+adapter are still incomplete. No native preset or release is approved by this
+component implementation.
+
 Use three precise labels:
 
 - **Historical candidate:** complete declared comparisons with limitations and
@@ -227,8 +261,9 @@ At this checkpoint the source baseline, read-only probe, contract kernel,
 21,270 matching frozen selector decisions, 18,858 admission comparisons, weekly
 clock calculation, exact-identity refresh and real paginated market observation
 are implemented and verified. P1's source/menu and arithmetic components are
-complete. Native controller, durable policy/basis and signal-queue integration,
-account deliverable review, and the release/recovery portions remain open, along with
+complete. The versioned native journal/queue and declared assignment-cost ceiling
+layer is implemented. Daemon scheduling and broker/order-adapter integration,
+account deliverable review, and release/recovery qualification remain open, along with
 the remaining numbered integration gates. No installed production software or
 configuration was changed or activated. Source code changes are isolated in the
 managed worktree.

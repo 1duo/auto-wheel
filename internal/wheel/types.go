@@ -349,6 +349,7 @@ type State struct {
 	Positions       map[string]Position    `json:"positions"`
 	Intents         map[string]Intent      `json:"intents"`
 	CompletedOrders map[string]OrderRecord `json:"completed_orders,omitempty"`
+	Fixed           *FixedPolicyState      `json:"fixed_policy,omitzero"`
 }
 
 // Completed receipts survive expiration and call-away. History from another
@@ -406,6 +407,9 @@ func (s State) Validate() error {
 		if symbol != in.Candidate.Symbol || in.Ref == "" || in.Candidate.ID == "" || in.Candidate.Strike <= 0 || in.Candidate.Strike > MaxMoney/100 || in.At.IsZero() {
 			return errors.New("invalid journal submission intent")
 		}
+	}
+	if s.Fixed != nil {
+		return s.Fixed.validate(s)
 	}
 	return nil
 }

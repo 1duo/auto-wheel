@@ -72,6 +72,10 @@ func (j *Journal) Save(st wheel.State) error {
 	if err := st.Validate(); err != nil {
 		return err
 	}
+	raw, err := json.MarshalIndent(st, "", "  ")
+	if err != nil || len(raw)+1 > 1<<20 {
+		return errors.New("journal exceeds its restart read limit")
+	}
 	return AtomicJSON(j.path, st)
 }
 func (j *Journal) Close() error { return j.lock.Close() }

@@ -14,26 +14,27 @@ import (
 // FixedMarketObservation is source evidence, not an executable Candidate.
 // Account funding, exact deliverable review and ownership remain separate.
 type FixedMarketObservation struct {
-	At                time.Time                `json:"observed_at"`
-	Day               string                   `json:"session_date"`
-	Mode              string                   `json:"policy_mode"`
-	Kind              string                   `json:"option_kind"`
-	Symbol            string                   `json:"symbol"`
-	Stock             contractpolicy.Book      `json:"underlying_book"`
-	BidAt             time.Time                `json:"underlying_bid_at"`
-	AskAt             time.Time                `json:"underlying_ask_at"`
-	MenuContracts     int                      `json:"menu_contracts"`
-	IdentityRefresh   bool                     `json:"identity_refresh"`
-	Choice            *contractpolicy.Contract `json:"choice,omitzero"`
-	Option            contractpolicy.Book      `json:"option_book"`
-	OptionAt          time.Time                `json:"option_at,omitzero"`
-	BidSize           int                      `json:"bid_size"`
-	Tick              wheel.Cents              `json:"tick_cents"`
-	MarketFresh       bool                     `json:"market_fresh"`
-	EntryBookUsable   bool                     `json:"entry_book_usable"`
-	Structural100     bool                     `json:"structural_100_share_chain"`
-	DeliverableReview bool                     `json:"account_deliverable_reviewed"`
-	TradingAuthorized bool                     `json:"trading_authorized"`
+	At                time.Time                 `json:"observed_at"`
+	Day               string                    `json:"session_date"`
+	Mode              string                    `json:"policy_mode"`
+	Kind              string                    `json:"option_kind"`
+	Symbol            string                    `json:"symbol"`
+	Stock             contractpolicy.Book       `json:"underlying_book"`
+	BidAt             time.Time                 `json:"underlying_bid_at"`
+	AskAt             time.Time                 `json:"underlying_ask_at"`
+	MenuContracts     int                       `json:"menu_contracts"`
+	Menu              []contractpolicy.Contract `json:"-"`
+	IdentityRefresh   bool                      `json:"identity_refresh"`
+	Choice            *contractpolicy.Contract  `json:"choice,omitzero"`
+	Option            contractpolicy.Book       `json:"option_book"`
+	OptionAt          time.Time                 `json:"option_at,omitzero"`
+	BidSize           int                       `json:"bid_size"`
+	Tick              wheel.Cents               `json:"tick_cents"`
+	MarketFresh       bool                      `json:"market_fresh"`
+	EntryBookUsable   bool                      `json:"entry_book_usable"`
+	Structural100     bool                      `json:"structural_100_share_chain"`
+	DeliverableReview bool                      `json:"account_deliverable_reviewed"`
+	TradingAuthorized bool                      `json:"trading_authorized"`
 }
 
 // ObserveFixedPolicy performs only get_* reads. Missing books are not replaced,
@@ -179,6 +180,7 @@ func (b *Broker) fixedMarket(ctx context.Context, mode, kind, symbol string, pin
 		menu = append(menu, contractpolicy.Contract{ID: op.ID, Symbol: op.Symbol, Kind: op.Kind, Expiry: op.Expiry, Strike: int64(op.Strike)})
 	}
 	out.MenuContracts = len(menu)
+	out.Menu = slices.Clone(menu)
 	if pinned == nil {
 		out.Choice, err = contractpolicy.Choose(mode, kind, day, symbol, out.Stock, menu)
 	} else {
@@ -249,4 +251,16 @@ func (b *Broker) fixedMarket(ctx context.Context, mode, kind, symbol string, pin
 	out.EntryBookUsable = contractpolicy.EntryBookUsable(out.Stock) && contractpolicy.EntryBookUsable(out.Option) &&
 		out.BidSize >= 1 && text(chosen, "tradability") == "tradable" && text(chosen, "state") == "active"
 	return out, nil
+}
+
+// SignalEvidence keeps the complete in-memory selection menu for the native
+// queue's independent selection check. A refresh or saved summary without that
+// menu cannot be recast as a new signal. This grants no account/order authority.
+func (o FixedMarketObservation) SignalEvidence() (wheel.FixedSignalEvidence, error) {
+	if o.Mode != "conservative" || o.IdentityRefresh || o.Choice == nil || !o.MarketFresh || !o.EntryBookUsable ||
+		!o.Structural100 || len(o.Menu) == 0 || len(o.Menu) != o.MenuContracts {
+		return wheel.FixedSignalEvidence{}, errors.New("market observation is not a complete fresh conservative signal")
+	}
+	return wheel.FixedSignalEvidence{Contract: *o.Choice, Menu: slices.Clone(o.Menu), Stock: o.Stock, Option: o.Option,
+		BidAt: o.BidAt, AskAt: o.AskAt, OptionAt: o.OptionAt, BidSize: o.BidSize, Tick: o.Tick}, nil
 }

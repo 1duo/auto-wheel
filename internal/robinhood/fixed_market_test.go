@@ -116,6 +116,16 @@ func TestFixedMarketObservation(t *testing.T) {
 			if got.MarketFresh != (scenario != "stale_ask") || got.EntryBookUsable != (scenario != "wide_stock" && scenario != "zero_chosen_bid" && scenario != "untradable_chosen") {
 				t.Fatalf("bad freshness/liquidity decision: %+v", got)
 			}
+			evidence, signalErr := got.SignalEvidence()
+			if (signalErr == nil) != (got.MarketFresh && got.EntryBookUsable) {
+				t.Fatal("unusable observation became signal evidence", signalErr)
+			}
+			if signalErr == nil {
+				evidence.Menu[0].Strike = 1
+				if got.Menu[0].Strike == 1 {
+					t.Fatal("signal evidence aliases the observation's original menu")
+				}
+			}
 			if !slices.Equal(client.calls, []string{"get_option_chains", "get_equity_quotes", "get_option_instruments", "get_option_quotes"}) {
 				t.Fatalf("unexpected request sequence: %v", client.calls)
 			}
@@ -174,6 +184,9 @@ func TestFixedIdentityRefresh(t *testing.T) {
 			}
 			if got.Choice == nil || *got.Choice != *signal.Choice || !got.IdentityRefresh || got.MenuContracts != 1 || got.TradingAuthorized || got.DeliverableReview {
 				t.Fatalf("refresh replaced identity or granted authority: %+v", got)
+			}
+			if _, err := got.SignalEvidence(); err == nil {
+				t.Fatal("execution refresh was recast as a new signal")
 			}
 			if got.MarketFresh != (scenario != "stale_side") || got.EntryBookUsable != (scenario != "zero_chosen_bid") {
 				t.Fatal("refreshed clocks or liquidity ignored", got)
