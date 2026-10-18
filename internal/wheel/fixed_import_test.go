@@ -160,6 +160,40 @@ func TestFixedCompatibilityPreviewCannotAuthorizeStaleExecution(t *testing.T) {
 	}
 }
 
+func TestFixedImportedStockAboveEntryBudgetCanBeCovered(t *testing.T) {
+	for _, price := range []Cents{35000, 95000} {
+		c, st, _, config, s, now := legacyImportFixture(t, true, false)
+		p := st.Positions["MSFT"]
+		p.Cost = price
+		st.Positions["MSFT"] = p
+		s.Shares[0].Cost, s.Orders[0].Strike = price, price
+		digest, err := FixedLegacyDigest(*st)
+		if err != nil {
+			t.Fatal(err)
+		}
+		config.FixedPolicy.ImportLegacyStateSHA = digest
+		if err := c.BindNative(config, s, now); err != nil {
+			t.Fatal(err)
+		}
+		call := fixedQueueEvidence("MSFT", "call", now)
+		call.Stock.Bid, call.Stock.Ask = int64(price)-1, int64(price)+1
+		call.Contract.Strike = int64(price) * 11 / 10
+		e := FixedExecutionEvidence{Market: call, ChainID: "chain", Deliverable100: true}
+		if _, err := c.PreviewNative(config, e, s, now); err != nil {
+			t.Fatal("entry ceilings prevented management of a verified inherited lot", err)
+		}
+		e.Market = fixedQueueEvidence("AAPL", "put", now)
+		if _, err := c.PreviewNative(config, e, s, now); price == 95000 && err == nil {
+			t.Fatal("legacy management exception funded a new put beyond the account ceiling")
+		}
+		s.AvailableCash = config.Reserve
+		e.Market = call
+		if _, err := c.PreviewNative(config, e, s, now); err == nil {
+			t.Fatal("legacy management bypassed fee/reserve funding")
+		}
+	}
+}
+
 func (b *fixedExecutionBroker) snapshotWithTime() Snapshot {
 	s := b.snapshot
 	s.At = *b.now

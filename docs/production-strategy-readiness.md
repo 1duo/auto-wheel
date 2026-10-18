@@ -21,6 +21,12 @@ old order writer stays fenced. The import exception cannot authorize another
 lifecycle, external shares, unknown submissions or peer inventory. TradePulse
 retirement, mask, native seal and lifetime lock remain required.
 
+An inherited own 100-share lot may already exceed the new entry ceilings.
+A covered call on that exact lot may still proceed because it adds no stock
+or cash-collateral exposure. Its fee, cash reserve, availability and acquisition
+floor remain mandatory. The entire inherited exposure still counts when
+admitting new puts; this management exception cannot fund another entry.
+
 Readiness now explicitly reports non-trading integration compatibility. Actual
 source timestamps remain intact. Outside market hours, old positive books can
 qualify the exact identity, standard deliverable and bounded broker fee/collateral

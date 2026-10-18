@@ -235,7 +235,15 @@ func (c *FixedController) openingCandidate(signal FixedSignal, e FixedExecutionE
 			return Candidate{}, errors.New("fixed call lacks its own currently available shares")
 		}
 	}
-	if !contractpolicy.CanOpen(c.spec.Limits, u) {
+	limits := c.spec.Limits
+	if a.Kind == "call" && c.state.Fixed.inherited(a.Symbol, p) {
+		// Existing own risk can exceed the new entry ceilings. Covering that
+		// exact lot adds no stock/collateral exposure; keep fee/reserve checks
+		// and continue counting all of it when admitting any new put.
+		limits.Account = max(limits.Account, u.AccountExposure)
+		limits.Symbol = max(limits.Symbol, u.SymbolExposure)
+	}
+	if !contractpolicy.CanOpen(limits, u) {
 		return Candidate{}, errors.New("fixed fee, reserve, slot or exposure limit blocks opening")
 	}
 	return a, nil
