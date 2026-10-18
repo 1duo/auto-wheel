@@ -192,6 +192,18 @@ func (c *FixedController) openingCandidate(signal FixedSignal, e FixedExecutionE
 	if len(c.state.Intents) != 0 || s.Account != c.spec.Account || !fresh(s.At, now, c.spec.MaxQuoteAge) {
 		return Candidate{}, errors.New("fixed opening lacks a reconciled fresh account")
 	}
+	for _, r := range c.state.CompletedOrders {
+		if r.Symbol == signal.Symbol && r.Closing && r.Filled == 1 {
+			at := r.ResolvedAt
+			if at.IsZero() {
+				at = r.At
+			}
+			if !now.Before(at) && now.In(Eastern).Format(time.DateOnly) > at.In(Eastern).Format(time.DateOnly) {
+				continue
+			}
+			return Candidate{}, errors.New("fixed reentry waits until a later session after broker-confirmed close")
+		}
+	}
 	a, err := c.executionCandidate(signal, e, now, requireFresh)
 	if err != nil {
 		return Candidate{}, err

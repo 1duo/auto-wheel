@@ -16,6 +16,16 @@ import (
 // ArchiveFixedCapitalState preserves the exact durable source journal before a
 // paused capital rebind. It cannot replace an existing archive or save a state.
 func (j *Journal) ArchiveFixedCapitalState(s wheel.State) (string, error) {
+	return j.archiveFixedState(s, "fixed-capital-archive")
+}
+
+// ArchiveFixedPolicyState retains transition and daily TP evidence without
+// discarding any receipts. Both callers hold the same exclusive journal lock.
+func (j *Journal) ArchiveFixedPolicyState(s wheel.State) (string, error) {
+	return j.archiveFixedState(s, "fixed-policy-archive")
+}
+
+func (j *Journal) archiveFixedState(s wheel.State, subdir string) (string, error) {
 	if err := s.Validate(); err != nil {
 		return "", err
 	}
@@ -42,7 +52,7 @@ func (j *Journal) ArchiveFixedCapitalState(s wheel.State) (string, error) {
 	}
 	digest := sha256.Sum256(raw)
 	pin := hex.EncodeToString(digest[:])
-	dir := filepath.Join(filepath.Dir(j.path), "fixed-capital-archive")
+	dir := filepath.Join(filepath.Dir(j.path), subdir)
 	if err = os.Mkdir(dir, 0700); err != nil && !errors.Is(err, os.ErrExist) {
 		return "", err
 	}

@@ -121,3 +121,20 @@ func TestFixedNativeDeadlineUsesActualSession(t *testing.T) {
 		}
 	}
 }
+
+func TestFixedTP75DeadlineIsDailyAndPolicyBound(t *testing.T) {
+	config := wheel.DefaultConfig()
+	config.FixedPolicy = &wheel.FixedPolicyConfig{Spec: wheel.FixedPolicySpec{ID: wheel.FixedConservativeTP75Policy}}
+	for _, day := range []time.Time{time.Date(2026, 10, 20, 0, 0, 0, 0, wheel.Eastern), time.Date(2026, 11, 27, 0, 0, 0, 0, wheel.Eastern)} {
+		_, execution, latest, known := wheel.FixedCloseTimes(day)
+		a := wheel.Candidate{Closing: true}
+		if !known || !fixedOrderDeadlineAllows(config, a, latest, execution) || fixedOrderDeadlineAllows(config, a, latest, execution.Add(-time.Nanosecond)) || fixedOrderDeadlineAllows(config, a, latest, latest.Add(time.Nanosecond)) || fixedOrderDeadlineAllows(config, a, latest.Add(time.Minute), execution) {
+			t.Fatal("daily TP deadline failed", day)
+		}
+		config.FixedPolicy.Spec.ID = wheel.FixedConservativePolicy
+		if fixedOrderDeadlineAllows(config, a, latest, execution) {
+			t.Fatal("hold authorized a daily close")
+		}
+		config.FixedPolicy.Spec.ID = wheel.FixedConservativeTP75Policy
+	}
+}

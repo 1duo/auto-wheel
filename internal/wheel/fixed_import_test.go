@@ -163,6 +163,10 @@ func TestFixedCompatibilityPreviewCannotAuthorizeStaleExecution(t *testing.T) {
 func TestFixedImportedStockAboveEntryBudgetCanBeCovered(t *testing.T) {
 	for _, price := range []Cents{35000, 95000} {
 		c, st, _, config, s, now := legacyImportFixture(t, true, false)
+		// Qualify the high-notional call's delivery fees separately from the
+		// entry-cap exception this test exercises.
+		c.spec.PhysicalFeeBudget = 1000
+		config.FixedPolicy.Spec.PhysicalFeeBudget = 1000
 		p := st.Positions["MSFT"]
 		p.Cost = price
 		st.Positions["MSFT"] = p

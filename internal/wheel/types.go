@@ -318,15 +318,17 @@ type Quote struct {
 	Delta        float64   `json:"delta"`
 	OI           int       `json:"open_interest"`
 	BidSize      int       `json:"bid_size"`
+	AskSize      int       `json:"ask_size,omitzero"`
 	Standard     bool      `json:"standard"`
 	Tradable     bool      `json:"tradable"`
 	Weekly       bool      `json:"weekly"`
 }
 
 type Candidate struct {
-	Closing     bool  `json:"closing,omitzero"`
-	CloseLimit  Cents `json:"close_limit_cents,omitzero"`
-	EntryCredit Cents `json:"entry_credit_cents,omitzero"`
+	Closing      bool   `json:"closing,omitzero"`
+	CloseLimit   Cents  `json:"close_limit_cents,omitzero"`
+	EntryCredit  Cents  `json:"entry_credit_cents,omitzero"`
+	EntryOrderID string `json:"entry_order_id,omitempty"`
 	Quote
 	NetPremium   Cents   `json:"net_premium_cents"`
 	Collateral   Cents   `json:"collateral_cents"`
@@ -343,6 +345,7 @@ type Position struct {
 	OwnedShares  int       `json:"owned_shares"`
 	CallID       string    `json:"call_id,omitempty"`
 	CallExpiry   string    `json:"call_expiry,omitempty"`
+	CallOpenedAt time.Time `json:"call_opened_at,omitzero"`
 	InventoryAt  time.Time `json:"inventory_at,omitzero"`
 	Cost         Cents     `json:"cost_cents,omitzero"`
 	MissingSince time.Time `json:"missing_since,omitzero"`
@@ -368,12 +371,13 @@ type State struct {
 // Completed receipts survive expiration and call-away. History from another
 // writer must never be mistaken for this daemon's own terminal order.
 type OrderRecord struct {
-	Filled   int       `json:"filled,omitzero"`
-	Closing  bool      `json:"closing,omitzero"`
-	Ref      string    `json:"ref_id"`
-	Symbol   string    `json:"symbol"`
-	OptionID string    `json:"option_id"`
-	At       time.Time `json:"at"`
+	Filled     int       `json:"filled,omitzero"`
+	Closing    bool      `json:"closing,omitzero"`
+	Ref        string    `json:"ref_id"`
+	Symbol     string    `json:"symbol"`
+	OptionID   string    `json:"option_id"`
+	At         time.Time `json:"at"`
+	ResolvedAt time.Time `json:"resolved_at,omitzero"`
 }
 
 func NewState() State {
@@ -411,10 +415,10 @@ func (s State) Validate() error {
 		}
 	}
 	for symbol, in := range s.Intents {
-		if !in.Candidate.Closing && (in.Candidate.CloseLimit != 0 || in.Candidate.EntryCredit != 0) {
+		if !in.Candidate.Closing && (in.Candidate.CloseLimit != 0 || in.Candidate.EntryCredit != 0 || in.Candidate.EntryOrderID != "") {
 			return errors.New("opening intent contains close terms")
 		}
-		if in.Candidate.Closing && (in.Candidate.Kind != "put" || in.Candidate.CloseLimit <= 0 || in.Candidate.CloseLimit > MaxMoney/100 || in.Candidate.EntryCredit <= 0 || in.Candidate.EntryCredit > MaxMoney) {
+		if in.Candidate.Closing && (in.Candidate.Kind != "put" && (in.Candidate.Kind != "call" || s.Fixed == nil || s.Fixed.Spec.ID != FixedConservativeTP75Policy) || in.Candidate.CloseLimit <= 0 || in.Candidate.CloseLimit > MaxMoney/100 || in.Candidate.EntryCredit <= 0 || in.Candidate.EntryCredit > MaxMoney) {
 			return errors.New("invalid close intent")
 		}
 		if symbol != in.Candidate.Symbol || in.Ref == "" || in.Candidate.ID == "" || in.Candidate.Strike <= 0 || in.Candidate.Strike > MaxMoney/100 || in.At.IsZero() {

@@ -51,6 +51,7 @@ type status struct {
 	PendingSelectionMode  wheel.SelectionMode       `json:"pending_selection_mode,omitempty"`
 	PendingStrategyPreset string                    `json:"pending_strategy_preset,omitempty"`
 	FixedBatch            *wheel.FixedBatch         `json:"fixed_signal_batch,omitzero"`
+	TakeProfitBatch       *wheel.FixedCloseBatch    `json:"take_profit_batch,omitzero"`
 }
 
 func main() {
@@ -63,7 +64,7 @@ func main() {
 
 func run() error {
 	if len(os.Args) < 2 {
-		return errors.New("usage: autowheel version|init|login|check-config|check-transition|rebind-capital|doctor|audit-account|run|once|adopt|recover")
+		return errors.New("usage: autowheel version|init|login|check-config|check-transition|rebind-capital|enable-tp75|doctor|audit-account|run|once|adopt|recover")
 	}
 	cmd := os.Args[1]
 	if cmd == "version" {
@@ -157,6 +158,12 @@ func run() error {
 			return errors.New("capital transition cannot enable trading")
 		}
 		return rebindCapital(c, *stateDir, os.Stdout)
+	}
+	if cmd == "enable-tp75" {
+		if *live || *liveCapable || *exclusive {
+			return errors.New("TP75 transition cannot enable trading")
+		}
+		return enableTP75(c, *stateDir, os.Stdout)
 	}
 	if cmd == "audit-account" {
 		if *live || *liveCapable || *exclusive {
@@ -313,6 +320,7 @@ func run() error {
 		s.LiveReadiness = readiness
 		if st.Fixed != nil {
 			s.FixedBatch = st.Fixed.Batch
+			s.TakeProfitBatch = st.Fixed.TakeProfit
 		}
 		mu.Lock()
 		current = s
@@ -411,7 +419,7 @@ func run() error {
 		lastBroker = new(snapshot)
 		if fixed != nil {
 			blocked := func(cause error) error {
-				readiness = &liveReadiness{At: time.Now(), Policy: wheel.FixedConservativePolicy, Reason: cause.Error()}
+				readiness = &liveReadiness{At: time.Now(), Policy: c.FixedPolicy.Spec.ID, Reason: cause.Error()}
 				s.Stage, s.Reason = "blocked", cause.Error()
 				update(s)
 				if errors.Is(cause, wheel.ErrFixedJournalDurability) {
@@ -431,18 +439,33 @@ func run() error {
 			if err = fixed.Recover(time.Now()); err != nil {
 				return blocked(err)
 			}
+			if err = fixed.RecoverTakeProfit(time.Now()); err != nil {
+				return blocked(err)
+			}
 			signalAt, executionAt, latestAt, entryDay := wheel.FixedEntryTimes(time.Now())
-			if entryDay && !time.Now().Before(signalAt) && time.Now().Before(executionAt) {
-				if st.Fixed.Batch == nil || st.Fixed.Batch.Day != signalAt.Format(time.DateOnly) {
+			closeSignal, closeExecution, closeLatest, closeDay := wheel.FixedCloseTimes(time.Now())
+			tp75 := c.FixedPolicy.Spec.ID == wheel.FixedConservativeTP75Policy
+			if entryDay && !time.Now().Before(signalAt) && time.Now().Before(executionAt) || tp75 && closeDay && !time.Now().Before(closeSignal) && time.Now().Before(closeExecution) {
+				// Reserve both cohorts before parallel source reads. The same
+				// minute serves daily closes and the existing weekly entries.
+				captureEntry, captureClose := false, false
+				if tp75 && (st.Fixed.TakeProfit == nil || st.Fixed.TakeProfit.Day != closeSignal.Format(time.DateOnly)) {
+					if err = fixed.BeginTakeProfit(time.Now()); err != nil {
+						return blocked(err)
+					}
+					captureClose = true
+				}
+				if entryDay && (st.Fixed.Batch == nil || st.Fixed.Batch.Day != signalAt.Format(time.DateOnly)) {
 					if err = fixed.Begin(c.FixedPolicy.Roster, time.Now()); err != nil {
 						return blocked(err)
 					}
-					if err = captureFixed(cycleCtx, fixed, &st, b, time.Now); err != nil {
-						return blocked(err)
-					}
+					captureEntry = true
+				}
+				if err = captureFixedCohorts(cycleCtx, fixed, &st, b, captureEntry, captureClose, time.Now); err != nil {
+					return blocked(err)
 				}
 				// Do not spend the original capture minute on compatibility scans.
-				s.Stage, s.Reason = "fixed_signal_prepared", "Weekly source cohort saved; waiting for its execution clock"
+				s.Stage, s.Reason = "fixed_signal_prepared", "Scheduled source cohorts saved; waiting for their execution clock"
 				update(s)
 				return nil
 			}
@@ -463,8 +486,33 @@ func run() error {
 					return nil
 				}
 			}
+			if tp75 && closeDay && !time.Now().Before(closeExecution) && !time.Now().After(closeLatest) && st.Fixed.TakeProfit != nil {
+				if s.Mode != "live" || halted || readiness == nil || !readiness.Ready {
+					s.Stage, s.Reason = "halted", "TP signals remain read-only until authenticated native activation"
+					update(s)
+					return nil
+				}
+				for _, signal := range st.Fixed.TakeProfit.Signals {
+					if signal.Phase != "ready" {
+						continue
+					}
+					if err = fixed.ExecuteTakeProfit(cycleCtx, c, b, signal.Symbol, time.Now); err != nil {
+						return blocked(err)
+					}
+					s.Stage, s.Reason = "submitted", "One TP75 buyback submitted; waiting for broker reconciliation"
+					select {
+					case wake <- struct{}{}:
+					default:
+					}
+					update(s)
+					return nil
+				}
+			}
 			if !entryDay || time.Now().Before(executionAt) || time.Now().After(latestAt) {
 				s.Stage, s.Reason = "fixed_holding", "Reconciled own lifecycles; waiting for the next weekly entry clock"
+				if tp75 {
+					s.Reason = "Reconciled own lifecycles; waiting for the next daily TP75 or weekly entry clock"
+				}
 				update(s)
 				return nil
 			}

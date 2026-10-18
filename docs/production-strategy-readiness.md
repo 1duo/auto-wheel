@@ -1,5 +1,51 @@
 # Research candidates to production
 
+## Authorized conservative TP75 release, October 18
+
+The user explicitly selected TP75 on both puts and covered calls after the
+experiment below. This production decision accepts its return/drawdown tradeoff;
+it does not change the historical research screens or missing-data results.
+The native policy is `conservative-rd1-floor-tp75-v1`. Conservative contract
+selection, the stock-cost call floor, the $200,000 account ceiling, reserve,
+three managed symbols and one contract per symbol remain bound to configuration.
+
+Each reviewed exchange session captures the exact owned shorts 31 minutes
+before regular close (normally 15:29 ET), then permits one attempt per symbol
+from 30 through 26 minutes before close. Early-close sessions use their actual
+close. Daily closes precede weekly openings; openings retain the first-session
+weekly schedule. The same symbol cannot reenter on the day its close is broker
+confirmed. Future entries require settled available cash; a call buyback keeps
+the 100 shares, their acquisition capital and their slot.
+
+The broker's opening order exposes gross execution premium, not paid historical
+fees. The live trigger therefore uses the reviewed opening and closing fee
+allowances (currently $1 each), explicitly as ceilings. For gross opening credit
+G and allowance F, maximum contract buyback debit is floor((G-F)/4)-F, rounded
+down to a valid per-share tick. The signal ask must satisfy that bound. Execution
+refreshes the same contract and cannot exceed the signal's fee-aware limit.
+Actual broker review must again prove fees within allowance, correct collateral
+release and current cash/ownership. These guards can skip a hypothetical replay
+fill whose later ask moves above the target. Production also preserves its
+configured reserve during buybacks; the historical modeled tax/fee assumptions
+remain distinct from live cash admission.
+
+The daily journal reserves before reads and claims before review, persists the
+submission reference before transport, and retains unknown outcomes without an
+automatic retry. Missed capture inputs abstain after restart. Prior daily source
+and ownership journals are archived immutably. A completed call buyback clears
+only the short after broker reporting confirms it is gone and the own stock
+remains; put assignment overlap or missing call stock blocks reconciliation.
+
+`enable-tp75` is the narrow pre-cohort transition from the current hold policy.
+It requires durable HALT, revoked LIVE authorization and the journal lock,
+archives the exact source, and preserves capital, fees, receipts, contracts and
+the original own-inventory import. It cannot authorize trading. Obtain fresh
+native TP75 readiness, then authenticated release/executable/config-bound
+activation. TradePulse remains sealed, inactive, persistently masked and fenced
+by the lifetime operational lock. For emergency rollback, use native HALT and
+retain the compatible TP75 executable/journal; the old hold executable cannot
+read TP batches. Never restore an older journal over later financial receipts.
+
 ## Conservative early-profit experiment, October 18
 
 The [TP evaluation](conservative-take-profit-evaluation-20261018.json) holds the
@@ -13,7 +59,8 @@ tax scenario, full-history liquidation return / sampled after-tax marked DD is
 21.17% / 15.63%, versus hold 19.44% / 14.69%. Fresh 2023–2025 improves return to
 10.24% from 7.03%, but DD rises to 14.85% from 9.09%. The fresh return/DD ratio
 falls about 10.8%. No tested TP profile improves the paired risk-adjusted result
-across both histories and all four tax scenarios. Keep the current hold policy.
+across both histories and all four tax scenarios. The research checkpoint
+recommended hold; the later explicit TP75 production decision is recorded above.
 
 Faster realized wins change the next put strike and inventory path. Fresh TP75
 makes 119 put openings versus hold 76, yet the April 2025 trough includes AMD

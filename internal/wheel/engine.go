@@ -79,13 +79,27 @@ func Reconcile(st *State, s Snapshot, now time.Time) error {
 		}
 		if o.Filled == 1 && in.Candidate.Closing {
 			p := st.Positions[symbol]
-			if p.PutID != in.Candidate.ID || p.OwnedShares != 0 || p.CallID != "" {
+			call := in.Candidate.Kind == "call"
+			if !call && (p.PutID != in.Candidate.ID || p.OwnedShares != 0 || p.CallID != "") ||
+				call && (p.CallID != in.Candidate.ID || p.OwnedShares != 100 || p.PutID != "") {
 				return errors.New("close fill ownership mismatch")
 			}
+			stockRetained := false
 			for _, h := range s.Shares {
-				if h.Symbol == symbol && h.Quantity != 0 {
-					return errors.New("close fill overlaps assignment inventory; freeze")
+				if h.Symbol != symbol {
+					continue
 				}
+				if call {
+					if h.Quantity != 100 || h.Cost != p.Cost {
+						return errors.New("call close lost its owned stock; freeze")
+					}
+					stockRetained = true
+				} else if h.Quantity != 0 {
+					return errors.New("put close overlaps assignment inventory; freeze")
+				}
+			}
+			if call && !stockRetained {
+				return errors.New("call close stock ownership unproven; freeze")
 			}
 			stillOpen := false
 			for _, op := range s.Options {
@@ -97,7 +111,12 @@ func Reconcile(st *State, s Snapshot, now time.Time) error {
 			if stillOpen {
 				continue
 			}
-			delete(st.Positions, symbol)
+			if call {
+				p.CallID, p.CallExpiry, p.CallOpenedAt, p.MissingSince = "", "", time.Time{}, time.Time{}
+				st.Positions[symbol] = p
+			} else {
+				delete(st.Positions, symbol)
+			}
 		} else if o.Filled == 1 {
 			p := st.Positions[symbol]
 			if in.Candidate.Kind == "put" {
@@ -111,6 +130,7 @@ func Reconcile(st *State, s Snapshot, now time.Time) error {
 			if in.Candidate.Kind == "call" {
 				p.CallID = in.Candidate.ID
 				p.CallExpiry = in.Candidate.Expiry
+				p.CallOpenedAt = in.At
 			}
 			st.Positions[symbol] = p
 		} else if o.State == "filled" {
@@ -120,7 +140,11 @@ func Reconcile(st *State, s Snapshot, now time.Time) error {
 			if st.CompletedOrders == nil {
 				st.CompletedOrders = map[string]OrderRecord{}
 			}
-			st.CompletedOrders[o.ID] = OrderRecord{Ref: in.Ref, Symbol: symbol, OptionID: in.Candidate.ID, At: in.At, Closing: in.Candidate.Closing, Filled: o.Filled}
+			r := OrderRecord{Ref: in.Ref, Symbol: symbol, OptionID: in.Candidate.ID, At: in.At, Closing: in.Candidate.Closing, Filled: o.Filled}
+			if r.Closing && r.Filled == 1 {
+				r.ResolvedAt = now
+			}
+			st.CompletedOrders[o.ID] = r
 		}
 		delete(st.Intents, symbol)
 	}
@@ -232,6 +256,7 @@ func Reconcile(st *State, s Snapshot, now time.Time) error {
 				}
 				p.CallID = ""
 				p.CallExpiry = ""
+				p.CallOpenedAt = time.Time{}
 				p.MissingSince = time.Time{}
 				st.Positions[symbol] = p
 			} else if held.Quantity != 100 {

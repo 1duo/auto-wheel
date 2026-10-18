@@ -16,43 +16,104 @@ type fixedMarketReader interface {
 	ObserveFixedPolicy(context.Context, string, string, string, func() time.Time) (robinhood.FixedMarketObservation, error)
 }
 
+type fixedCloseReader interface {
+	CloseQuote(context.Context, wheel.State, string) (wheel.Candidate, error)
+}
+
 // Reads run at most three at once; only this collector changes the journal.
 // Each result is saved as it arrives, preserving partial capture across a crash.
 func captureFixed(ctx context.Context, control *wheel.FixedController, st *wheel.State, b fixedMarketReader, clock func() time.Time) error {
-	batch := st.Fixed.Batch
-	remaining := batch.ExecutionAt.Sub(clock())
+	return captureFixedSources(ctx, control, st, b, nil, true, false, clock)
+}
+
+func captureFixedCohorts(ctx context.Context, control *wheel.FixedController, st *wheel.State, b *robinhood.Broker, entry, tp bool, clock func() time.Time) error {
+	return captureFixedSources(ctx, control, st, b, b, entry, tp, clock)
+}
+
+func captureFixedSources(ctx context.Context, control *wheel.FixedController, st *wheel.State, b fixedMarketReader, closer fixedCloseReader, entry, tp bool, clock func() time.Time) error {
+	if !entry && !tp {
+		return nil
+	}
+	execution := time.Time{}
+	if entry {
+		execution = st.Fixed.Batch.ExecutionAt
+	}
+	if tp {
+		execution = st.Fixed.TakeProfit.ExecutionAt
+	}
+	recover := func() error {
+		if entry {
+			if err := control.Recover(clock()); err != nil {
+				return err
+			}
+		}
+		if tp {
+			return control.RecoverTakeProfit(clock())
+		}
+		return nil
+	}
+	remaining := execution.Sub(clock())
 	if remaining <= 0 {
-		return control.Recover(clock())
+		return recover()
 	}
 	ctx, cancel := context.WithTimeout(ctx, remaining)
 	defer cancel()
-	tasks := make(chan wheel.FixedSignal, len(batch.Signals))
+	type task struct {
+		symbol, kind string
+		closing      bool
+	}
+	tasks := make(chan task, 16)
 	type result struct {
 		symbol      string
+		closing     bool
 		observation robinhood.FixedMarketObservation
+		candidate   wheel.Candidate
 		err         error
 	}
-	results := make(chan result, len(batch.Signals))
-	for _, signal := range batch.Signals {
-		if signal.Phase == "unobserved" {
-			tasks <- signal
+	results := make(chan result, 16)
+	if tp {
+		for _, signal := range st.Fixed.TakeProfit.Signals {
+			if signal.Phase == "unobserved" {
+				tasks <- task{symbol: signal.Symbol, closing: true}
+			}
 		}
 	}
+	if entry {
+		for _, signal := range st.Fixed.Batch.Signals {
+			if signal.Phase == "unobserved" {
+				tasks <- task{symbol: signal.Symbol, kind: signal.Kind}
+			}
+		}
+	}
+	count := len(tasks)
 	close(tasks)
 	var group sync.WaitGroup
-	for range min(3, len(batch.Signals)) {
+	// Workers use an immutable ownership snapshot; only this collector saves.
+	owned := *st
+	for range min(3, count) {
 		group.Go(func() {
 			for signal := range tasks {
-				observation, err := b.ObserveFixedPolicy(ctx, "conservative", signal.Kind, signal.Symbol, clock)
-				results <- result{signal.Symbol, observation, err}
+				r := result{symbol: signal.symbol, closing: signal.closing}
+				if signal.closing {
+					r.candidate, r.err = closer.CloseQuote(ctx, owned, signal.symbol)
+				} else {
+					r.observation, r.err = b.ObserveFixedPolicy(ctx, "conservative", signal.kind, signal.symbol, clock)
+				}
+				results <- r
 			}
 		})
 	}
 	go func() { group.Wait(); close(results) }()
 	for result := range results {
 		at := clock()
-		if !at.Before(batch.ExecutionAt) {
+		if !at.Before(execution) {
 			continue // Recovery abstains omitted inputs; never record a late price.
+		}
+		if result.closing {
+			if err := control.RecordTakeProfit(result.symbol, result.candidate, result.err, at); err != nil {
+				return err
+			}
+			continue
 		}
 		evidence, err := result.observation.SignalEvidence()
 		if result.err != nil || err != nil {
@@ -69,14 +130,22 @@ func captureFixed(ctx context.Context, control *wheel.FixedController, st *wheel
 		}
 	}
 	at := clock()
-	if !at.Before(batch.ExecutionAt) {
-		return control.Recover(at)
+	if !at.Before(execution) {
+		return recover()
 	}
-	return control.Seal(at)
+	if tp {
+		if err := control.RecoverTakeProfit(at); err != nil {
+			return err
+		}
+	}
+	if entry {
+		return control.Seal(at)
+	}
+	return nil
 }
 
 func fixedPreflight(ctx context.Context, config wheel.Config, control *wheel.FixedController, st *wheel.State, b *robinhood.Broker, s wheel.Snapshot) liveReadiness {
-	r := liveReadiness{At: time.Now(), Policy: wheel.FixedConservativePolicy, Scope: "integration_only; orders require fresh market data",
+	r := liveReadiness{At: time.Now(), Policy: config.FixedPolicy.Spec.ID, Scope: "integration_only; orders require fresh market data",
 		OrderCoveragePolicy: "exclusive_standard", CoverageWarning: wheel.StandardOrderWarning, Unavailable: map[string]string{}}
 	day := r.At.In(wheel.Eastern).Format(time.DateOnly)
 	roster := config.FixedPolicy.Roster
@@ -85,6 +154,31 @@ func fixedPreflight(ctx context.Context, config wheel.Config, control *wheel.Fix
 		return r
 	}
 	symbols := slices.Sorted(maps.Keys(st.Positions))
+	if config.FixedPolicy.Spec.ID == wheel.FixedConservativeTP75Policy {
+		for _, symbol := range symbols {
+			p := st.Positions[symbol]
+			if p.PutID == "" && p.CallID == "" {
+				continue
+			}
+			a, err := b.PreviewClose(ctx, *st, symbol)
+			if err == nil {
+				s, err = b.Snapshot(ctx)
+				if err == nil {
+					err = control.PreviewTakeProfit(config, a, s, time.Now())
+				}
+				if err == nil {
+					err = b.PreviewCheck(ctx, a)
+				}
+			}
+			if err != nil {
+				r.Ready = false
+				r.Reason = "TP75 owned close compatibility: " + symbol + ": " + err.Error()
+				return r
+			}
+			r.Ready, r.Preview = true, new(a)
+			r.VerifiedSymbols = append(r.VerifiedSymbols, symbol)
+		}
+	}
 	for _, symbol := range roster.Symbols {
 		if !slices.Contains(symbols, symbol) {
 			symbols = append(symbols, symbol)
@@ -125,10 +219,13 @@ func fixedPreflight(ctx context.Context, config wheel.Config, control *wheel.Fix
 			continue
 		}
 		r.At, r.Ready, r.Preview = time.Now(), true, new(a)
-		r.VerifiedSymbols = []string{symbol}
+		r.VerifiedSymbols = append(r.VerifiedSymbols, symbol)
 		return r
 	}
-	r.Reason = "no fixed-policy opening passed identity, deliverable, fresh account funding and fee compatibility review"
+	if !r.Ready {
+		r.Reason = "no fixed-policy opening or owned close passed account, identity and fee compatibility review"
+	}
+	r.At = time.Now()
 	return r
 }
 
@@ -141,6 +238,9 @@ func cycleDelay(config wheel.Config, now time.Time) time.Duration {
 		return delay
 	}
 	signal, execution, latest, known := wheel.FixedEntryTimes(now)
+	if config.FixedPolicy.Spec.ID == wheel.FixedConservativeTP75Policy {
+		signal, execution, latest, known = wheel.FixedCloseTimes(now)
+	}
 	if !known {
 		return delay
 	}

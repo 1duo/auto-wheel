@@ -10,36 +10,50 @@ import (
 // CloseQuote reads the exact owned contract and its actual opening fill, never
 // the nearest expiry used for new entries. It cannot place or cancel an order.
 func (b *Broker) CloseQuote(ctx context.Context, st wheel.State, symbol string) (wheel.Candidate, error) {
+	return b.closeQuote(ctx, st, symbol, true)
+}
+
+// PreviewClose permits old source clocks only for read-only compatibility.
+func (b *Broker) PreviewClose(ctx context.Context, st wheel.State, symbol string) (wheel.Candidate, error) {
+	return b.closeQuote(ctx, st, symbol, false)
+}
+
+func (b *Broker) closeQuote(ctx context.Context, st wheel.State, symbol string, requireFresh bool) (wheel.Candidate, error) {
 	var a wheel.Candidate
 	p := st.Positions[symbol]
-	if p.PutID == "" || p.CallID != "" || p.OwnedShares != 0 || st.Account != b.Config.Account {
-		return a, errors.New("no exclusively owned put to close")
+	id, kind, expiry, opened := p.PutID, "put", p.PutExpiry, p.PutOpenedAt
+	call := p.CallID != "" && p.PutID == "" && p.OwnedShares == 100 && b.Config.FixedPolicy != nil && b.Config.FixedPolicy.Spec.ID == wheel.FixedConservativeTP75Policy
+	if call {
+		id, kind, expiry, opened = p.CallID, "call", p.CallExpiry, p.CallOpenedAt
 	}
-	rows, err := b.collection(ctx, "get_option_instruments", object{"ids": p.PutID}, "instruments")
+	if id == "" || !call && (p.CallID != "" || p.OwnedShares != 0) || st.Account != b.Config.Account || opened.IsZero() {
+		return a, errors.New("no exclusively owned short with an opening clock to close")
+	}
+	rows, err := b.collection(ctx, "get_option_instruments", object{"ids": id}, "instruments")
 	if err != nil {
 		return a, err
 	}
-	if len(rows) != 1 || text(rows[0], "id") != p.PutID {
+	if len(rows) != 1 || text(rows[0], "id") != id {
 		return a, errors.New("close instrument identity missing")
 	}
 	meta := rows[0]
-	op, err := instrument(meta, p.PutID)
+	op, err := instrument(meta, id)
 	if err != nil {
 		return a, err
 	}
 	op.Quantity = 1
-	if op.Symbol != symbol || op.Kind != "put" || op.Strike != p.PutStrike || op.Expiry != p.PutExpiry || text(meta, "underlying_type") != "equity" || text(meta, "state") != "active" || text(meta, "tradability") != "tradable" {
+	if op.Symbol != symbol || op.Kind != kind || kind == "put" && op.Strike != p.PutStrike || op.Expiry != expiry || text(meta, "underlying_type") != "equity" || text(meta, "state") != "active" || text(meta, "tradability") != "tradable" {
 		return a, errors.New("owned close instrument changed or is untradable")
 	}
 	a = wheel.Candidate{Closing: true, Quote: wheel.Quote{Option: op, Standard: true, Tradable: true}}
 	orderID := ""
 	var entry wheel.OrderRecord
-	for id, r := range st.CompletedOrders {
-		if !r.Closing && r.Symbol == symbol && r.OptionID == p.PutID && r.At.Equal(p.PutOpenedAt) {
+	for receiptID, r := range st.CompletedOrders {
+		if !r.Closing && r.Filled == 1 && r.Symbol == symbol && r.OptionID == id && r.At.Equal(opened) {
 			if orderID != "" {
 				return a, errors.New("ambiguous opening receipt")
 			}
-			orderID, entry = id, r
+			orderID, entry = receiptID, r
 		}
 	}
 	if orderID == "" {
@@ -53,6 +67,9 @@ func (b *Broker) CloseQuote(ctx context.Context, st wheel.State, symbol string) 
 		return a, errors.New("opening fill unavailable")
 	}
 	opening := orders[0]
+	if text(opening, "ref_id") != "" && text(opening, "ref_id") != entry.Ref {
+		return a, errors.New("opening fill reference differs from owned receipt")
+	}
 	limit, err := money(opening, "price")
 	if err != nil || limit <= 0 || limit > wheel.MaxMoney/100 {
 		return a, errors.New("opening limit invalid")
@@ -81,6 +98,7 @@ func (b *Broker) CloseQuote(ctx context.Context, st wheel.State, symbol string) 
 		return a, errors.New("opening premium or execution mismatch")
 	}
 	a.EntryCredit = credit
+	a.EntryOrderID = orderID
 	stocks, err := b.quoteRows(ctx, "get_equity_quotes", object{"symbols": []string{symbol}})
 	if err != nil {
 		return a, err
@@ -96,11 +114,11 @@ func (b *Broker) CloseQuote(ctx context.Context, st wheel.State, symbol string) 
 	if err != nil {
 		return a, err
 	}
-	quotes, err := b.quoteRows(ctx, "get_option_quotes", object{"instrument_ids": []string{p.PutID}})
+	quotes, err := b.quoteRows(ctx, "get_option_quotes", object{"instrument_ids": []string{id}})
 	if err != nil {
 		return a, err
 	}
-	if len(quotes) != 1 || optionID(quotes[0]) != p.PutID {
+	if len(quotes) != 1 || optionID(quotes[0]) != id {
 		return a, errors.New("close quote identity missing")
 	}
 	q := quotes[0]
@@ -116,6 +134,7 @@ func (b *Broker) CloseQuote(ctx context.Context, st wheel.State, symbol string) 
 	if err != nil || size < 1 {
 		return a, errors.New("no offered close liquidity")
 	}
+	a.AskSize = size
 	a.At, err = timestamp(q, "updated_at")
 	if err != nil {
 		return a, err
@@ -137,7 +156,7 @@ func (b *Broker) CloseQuote(ctx context.Context, st wheel.State, symbol string) 
 		return a, errors.New("close ask is not a valid limit")
 	}
 	a.CloseLimit = a.Ask
-	if time.Since(a.At) > time.Duration(b.Config.MaxQuoteAgeSeconds)*time.Second {
+	if time.Until(a.At) > 2*time.Second || time.Until(a.UnderlyingAt) > 2*time.Second || requireFresh && (time.Since(a.At) > time.Duration(b.Config.MaxQuoteAgeSeconds)*time.Second || time.Since(a.UnderlyingAt) > time.Duration(b.Config.MaxQuoteAgeSeconds)*time.Second) {
 		return a, errors.New("close quote stale")
 	}
 	return a, nil

@@ -13,6 +13,7 @@ import (
 )
 
 const FixedConservativePolicy = "conservative-rd1-floor-hold-v1"
+const FixedConservativeTP75Policy = "conservative-rd1-floor-tp75-v1"
 
 type FixedPolicyConfig struct {
 	Spec                 FixedPolicySpec `json:"spec"`
@@ -71,7 +72,7 @@ type FixedPolicySpec struct {
 }
 
 func (p FixedPolicySpec) Validate() error {
-	if p.ID != FixedConservativePolicy || len(p.Account) < 4 || len(p.Account) > 32 ||
+	if p.ID != FixedConservativePolicy && p.ID != FixedConservativeTP75Policy || len(p.Account) < 4 || len(p.Account) > 32 ||
 		strings.Trim(p.Account, "0123456789") != "" || !fixedSHA(p.FeeSourceSHA) || p.FeeKnownAt.IsZero() ||
 		p.OptionFeeBudget < 0 || p.OptionFeeBudget > 10000 || p.PhysicalFeeBudget < 0 || p.PhysicalFeeBudget > 10000 ||
 		p.MaxQuoteAge < 1 || p.MaxQuoteAge > 60 || p.Limits.Account <= 0 || p.Limits.Account > int64(MaxMoney) ||
@@ -136,13 +137,14 @@ type FixedBatch struct {
 }
 
 type FixedPolicyState struct {
-	Version   int                `json:"version"`
-	Spec      FixedPolicySpec    `json:"spec"`
-	PolicySHA string             `json:"policy_sha256"`
-	BoundAt   time.Time          `json:"bound_at"`
-	Batch     *FixedBatch        `json:"batch,omitzero"`
-	Contracts map[string]Option  `json:"open_contracts,omitempty"`
-	Legacy    *FixedLegacyImport `json:"legacy_import,omitzero"`
+	Version    int                `json:"version"`
+	Spec       FixedPolicySpec    `json:"spec"`
+	PolicySHA  string             `json:"policy_sha256"`
+	BoundAt    time.Time          `json:"bound_at"`
+	Batch      *FixedBatch        `json:"batch,omitzero"`
+	Contracts  map[string]Option  `json:"open_contracts,omitempty"`
+	Legacy     *FixedLegacyImport `json:"legacy_import,omitzero"`
+	TakeProfit *FixedCloseBatch   `json:"take_profit,omitzero"`
 }
 
 // FixedSignalEvidence is input to signal selection, not an order capability.
@@ -244,9 +246,14 @@ func (f FixedPolicyState) validate(s State) error {
 			return errors.New("fixed contract metadata outlived its owned position")
 		}
 	}
+	if err := f.validateTakeProfit(s); err != nil {
+		return err
+	}
 	if f.Batch == nil {
-		if len(s.Intents) != 0 {
-			return errors.New("fixed inventory or submission intent has no signal batch")
+		for _, in := range s.Intents {
+			if !in.Candidate.Closing {
+				return errors.New("fixed opening intent has no signal batch")
+			}
 		}
 		for symbol, p := range s.Positions {
 			if !f.inherited(symbol, p) {
@@ -332,6 +339,9 @@ func (f FixedPolicyState) validate(s State) error {
 	}
 	for symbol, in := range s.Intents {
 		q := in.Candidate
+		if q.Closing {
+			continue
+		} // Bound to its daily TP claim above.
 		i := slices.IndexFunc(b.Signals, func(v FixedSignal) bool { return v.Symbol == symbol })
 		if !fixedSymbol(symbol) || q.Closing || in.At.Before(f.BoundAt) || i < 0 || b.Signals[i].Phase != "claimed" ||
 			in.At.Before(b.Signals[i].TransitionAt) || in.At.After(b.LatestAt) ||

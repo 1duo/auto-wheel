@@ -16,6 +16,15 @@ func fixedDeadlineAllows(deadline, now time.Time) bool {
 	return known && deadline.Equal(latest) && !now.Before(execution) && !now.After(latest)
 }
 
+func fixedOrderDeadlineAllows(config wheel.Config, a wheel.Candidate, deadline, now time.Time) bool {
+	if !a.Closing {
+		return fixedDeadlineAllows(deadline, now)
+	}
+	_, execution, latest, known := wheel.FixedCloseTimes(now)
+	return config.FixedPolicy != nil && config.FixedPolicy.Spec.ID == wheel.FixedConservativeTP75Policy && known &&
+		deadline.Equal(latest) && !now.Before(execution) && !now.After(latest)
+}
+
 // RefreshForFixed adds account-specific deliverable proof to the exact-identity
 // market refresh. Actual order review and current account funding follow later.
 func (b *Broker) RefreshForFixed(ctx context.Context, chosen contractpolicy.Contract, clock func() time.Time) (wheel.FixedExecutionEvidence, error) {

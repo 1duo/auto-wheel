@@ -792,7 +792,7 @@ func validateReview(o object, c wheel.Config, a wheel.Candidate, requireFresh bo
 	}
 	cashDirection := "debit"
 	if a.Closing {
-		if a.Kind != "put" || a.CloseLimit <= 0 || a.CloseLimit > wheel.MaxMoney/100 {
+		if a.Kind != "put" && (a.Kind != "call" || c.FixedPolicy == nil || c.FixedPolicy.Spec.ID != wheel.FixedConservativeTP75Policy) || a.CloseLimit <= 0 || a.CloseLimit > wheel.MaxMoney/100 {
 			return errors.New("unsupported close review")
 		}
 		cashDirection = "credit"
@@ -825,7 +825,11 @@ func validateReview(o object, c wheel.Config, a wheel.Candidate, requireFresh bo
 		}
 		q, qerr := integer(e, "quantity")
 		u, uerr := integer(e, "uncovered_shares")
-		if qerr != nil || uerr != nil || q != 100 || u != 0 || text(e, "symbol") != a.Symbol || text(e, "direction") != "debit" || text(e, "instrument_id") == "" {
+		shareDirection := "debit"
+		if a.Closing {
+			shareDirection = "credit"
+		}
+		if qerr != nil || uerr != nil || q != 100 || u != 0 || text(e, "symbol") != a.Symbol || text(e, "direction") != shareDirection || text(e, "instrument_id") == "" {
 			return errors.New("call is not covered by exactly 100 available shares")
 		}
 	} else {
@@ -896,7 +900,7 @@ func (b *Broker) submitEvidence(ctx context.Context, a wheel.Candidate, ref stri
 		id, err := b.SubmitProvider(ctx, a, ref)
 		return id, nil, err
 	}
-	if !fixedDeadline.IsZero() && !fixedDeadlineAllows(fixedDeadline, time.Now()) {
+	if !fixedDeadline.IsZero() && !fixedOrderDeadlineAllows(b.Config, a, fixedDeadline, time.Now()) {
 		return "", nil, wheel.ErrNotSubmitted
 	}
 	guard := func() error {
@@ -907,7 +911,7 @@ func (b *Broker) submitEvidence(ctx context.Context, a wheel.Candidate, ref stri
 		}
 		if !wheel.TradingWindow(time.Now()) || ctx.Err() != nil || time.Until(a.At) > 2*time.Second || time.Until(a.UnderlyingAt) > 2*time.Second ||
 			time.Since(a.At) > time.Duration(b.Config.MaxQuoteAgeSeconds)*time.Second || time.Since(a.UnderlyingAt) > time.Duration(b.Config.MaxQuoteAgeSeconds)*time.Second ||
-			!fixedDeadline.IsZero() && !fixedDeadlineAllows(fixedDeadline, time.Now()) {
+			!fixedDeadline.IsZero() && !fixedOrderDeadlineAllows(b.Config, a, fixedDeadline, time.Now()) {
 			return wheel.ErrNotSubmitted
 		}
 		if fixedGuard != nil {

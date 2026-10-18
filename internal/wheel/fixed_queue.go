@@ -35,6 +35,11 @@ func NewFixedController(spec FixedPolicySpec, state *State, store FixedStore) (*
 	if state == nil || store == nil {
 		return nil, errors.New("fixed controller needs the locked account journal")
 	}
+	if spec.ID == FixedConservativeTP75Policy {
+		if _, ok := store.(FixedPolicyArchiver); !ok {
+			return nil, errors.New("TP75 requires a durable policy journal archiver")
+		}
+	}
 	if err := state.Validate(); err != nil {
 		return nil, err
 	}
@@ -81,6 +86,16 @@ func (c *FixedController) saveState(next State) error {
 func (c *FixedController) copy() FixedPolicyState {
 	f := *c.state.Fixed
 	f.Contracts = maps.Clone(f.Contracts)
+	if f.TakeProfit != nil {
+		b := *f.TakeProfit
+		b.Signals = slices.Clone(b.Signals)
+		for i := range b.Signals {
+			if b.Signals[i].Candidate != nil {
+				b.Signals[i].Candidate = new(*b.Signals[i].Candidate)
+			}
+		}
+		f.TakeProfit = &b
+	}
 	if f.Batch != nil {
 		b := *f.Batch
 		b.Managed = slices.Clone(b.Managed)

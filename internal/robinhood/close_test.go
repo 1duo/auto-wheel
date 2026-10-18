@@ -72,25 +72,30 @@ func TestCloseReviewAndReceipt(t *testing.T) {
 
 type closeQuoteClient struct {
 	mutate string
+	kind   string
 	at     time.Time
 }
 
 func (c closeQuoteClient) Supports(string, string) bool { return true }
 func (c closeQuoteClient) Call(_ context.Context, name string, args object) (any, error) {
 	stamp := time.Now().Format(time.RFC3339Nano)
+	kind := c.kind
+	if kind == "" {
+		kind = "put"
+	}
 	switch name {
 	case "get_option_instruments":
 		id := "option"
 		if c.mutate == "contract" {
 			id = "other"
 		}
-		return object{"instruments": []any{object{"id": id, "chain_id": "chain", "chain_symbol": "NVDA", "underlying_type": "equity", "expiration_date": "2026-10-16", "strike_price": "210.00", "type": "put", "state": "active", "tradability": "tradable", "trade_value_multiplier": "100.0000", "min_ticks": object{"above_tick": "0.05", "below_tick": "0.01", "cutoff_price": "3.00"}}}}, nil
+		return object{"instruments": []any{object{"id": id, "chain_id": "chain", "chain_symbol": "NVDA", "underlying_type": "equity", "expiration_date": "2026-10-16", "strike_price": "210.00", "type": kind, "state": "active", "tradability": "tradable", "trade_value_multiplier": "100.0000", "min_ticks": object{"above_tick": "0.05", "below_tick": "0.01", "cutoff_price": "3.00"}}}}, nil
 	case "get_option_orders":
 		credit := "22.00"
 		if c.mutate == "credit" {
 			credit = "2200"
 		}
-		return object{"orders": []any{object{"id": "opening", "created_at": c.at.Format(time.RFC3339Nano), "placed_agent": "agentic", "chain_id": "chain", "chain_symbol": "NVDA", "direction": "credit", "quantity": "1", "processed_quantity": "1", "processed_premium": credit, "price": "0.22", "premium": "22.00", "trade_value_multiplier": "100.0000", "type": "limit", "trigger": "immediate", "time_in_force": "gfd", "market_hours": "regular_hours", "state": "filled", "legs": []any{object{"option_id": "option", "option_type": "put", "strike_price": "210.00", "expiration_date": "2026-10-16", "side": "sell", "position_effect": "open", "ratio_quantity": json.Number("1"), "executions": []any{object{"price": "0.22", "quantity": "1"}}}}}}}, nil
+		return object{"orders": []any{object{"id": "opening", "created_at": c.at.Format(time.RFC3339Nano), "placed_agent": "agentic", "chain_id": "chain", "chain_symbol": "NVDA", "direction": "credit", "quantity": "1", "processed_quantity": "1", "processed_premium": credit, "price": "0.22", "premium": "22.00", "trade_value_multiplier": "100.0000", "type": "limit", "trigger": "immediate", "time_in_force": "gfd", "market_hours": "regular_hours", "state": "filled", "legs": []any{object{"option_id": "option", "option_type": kind, "strike_price": "210.00", "expiration_date": "2026-10-16", "side": "sell", "position_effect": "open", "ratio_quantity": json.Number("1"), "executions": []any{object{"price": "0.22", "quantity": "1"}}}}}}}, nil
 	case "get_equity_quotes":
 		return object{"results": []any{object{"quote": object{"symbol": "NVDA", "state": "active", "has_traded": true, "last_trade_price": "216.72", "venue_last_trade_time": stamp}}}}, nil
 	case "get_option_quotes":
@@ -116,7 +121,7 @@ func TestCloseQuoteExactOwnedFill(t *testing.T) {
 			st := wheel.NewState()
 			st.Account = c.Account
 			st.Positions["NVDA"] = wheel.Position{PutID: "option", PutExpiry: "2026-10-16", PutStrike: 21000, PutOpenedAt: at, Provenance: "own"}
-			st.CompletedOrders = map[string]wheel.OrderRecord{"opening": {Ref: "ref", Symbol: "NVDA", OptionID: "option", At: at}}
+			st.CompletedOrders = map[string]wheel.OrderRecord{"opening": {Ref: "ref", Symbol: "NVDA", OptionID: "option", At: at, Filled: 1}}
 			if change == "unowned" {
 				delete(st.CompletedOrders, "opening")
 			}
@@ -131,6 +136,57 @@ func TestCloseQuoteExactOwnedFill(t *testing.T) {
 				}
 			} else if err == nil {
 				t.Fatal("unproven close quote admitted")
+			}
+		})
+	}
+}
+
+func TestFixedTP75CallCloseUsesCurrentOwnedOpening(t *testing.T) {
+	c := wheel.DefaultConfig()
+	c.Account = "account"
+	c.FixedPolicy = &wheel.FixedPolicyConfig{Spec: wheel.FixedPolicySpec{ID: wheel.FixedConservativeTP75Policy}}
+	at := time.Now().Add(-time.Hour)
+	st := wheel.NewState()
+	st.Account = c.Account
+	st.Positions["NVDA"] = wheel.Position{OwnedShares: 100, Cost: 21000, CallID: "option", CallExpiry: "2026-10-16", CallOpenedAt: at}
+	st.CompletedOrders = map[string]wheel.OrderRecord{
+		"opening":        {Ref: "current", Symbol: "NVDA", OptionID: "option", At: at, Filled: 1},
+		"previous-cycle": {Ref: "previous", Symbol: "NVDA", OptionID: "option", At: at.Add(-24 * time.Hour), Filled: 1},
+	}
+	b := Broker{Config: c, MCP: closeQuoteClient{kind: "call", at: at}}
+	a, err := b.CloseQuote(t.Context(), st, "NVDA")
+	if err != nil || a.Kind != "call" || a.EntryOrderID != "opening" || a.EntryCredit != 2200 || a.AskSize != 20 {
+		t.Fatal("call opening identity changed across cycles", a, err)
+	}
+	p := st.Positions["NVDA"]
+	p.CallOpenedAt = time.Time{}
+	st.Positions["NVDA"] = p
+	if _, err = b.CloseQuote(t.Context(), st, "NVDA"); err == nil {
+		t.Fatal("call without exact opening clock admitted")
+	}
+}
+
+func TestFixedTP75CallReviewMustReleaseExactlyOwnShares(t *testing.T) {
+	for _, change := range []string{"valid", "opening_direction", "quantity", "put_policy"} {
+		t.Run(change, func(t *testing.T) {
+			o, c, a := closingReviewFixture(t)
+			c.FixedPolicy = &wheel.FixedPolicyConfig{Spec: wheel.FixedPolicySpec{ID: wheel.FixedConservativeTP75Policy}}
+			a.Kind = "call"
+			collateral := o["collateral"].(object)
+			collateral["cash"].(object)["amount"] = "0"
+			e := object{"symbol": a.Symbol, "quantity": "100", "uncovered_shares": "0", "direction": "credit", "instrument_id": "stock"}
+			collateral["equities"] = []any{e}
+			switch change {
+			case "opening_direction":
+				e["direction"] = "debit"
+			case "quantity":
+				e["quantity"] = "99"
+			case "put_policy":
+				c.FixedPolicy.Spec.ID = wheel.FixedConservativePolicy
+			}
+			err := validateReview(o, c, a, true)
+			if (err == nil) != (change == "valid") {
+				t.Fatal("call release review", err)
 			}
 		})
 	}
