@@ -92,7 +92,7 @@ final class WheelModel: ObservableObject {
         await refresh()
     }
     func selectMode(_ mode: SelectionMode) async {
-        guard connected, !busy, status?.config.selectionMode != nil else { return }
+        guard connected, !busy, status?.config.fixed_policy == nil, status?.config.selectionMode != nil else { return }
         busy = true; notice = nil
         defer { busy = false; changed?() }
         do {

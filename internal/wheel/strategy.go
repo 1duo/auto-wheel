@@ -61,6 +61,9 @@ func PreviewFunded(c Config, symbol, kind string, quotes []Quote, cost, availabl
 // empty-mode custom bands. Explicit named modes require their exact preset
 // put bands; unknown modes are rejected even when Validate was bypassed.
 func selectionModeFor(c Config) (SelectionMode, bool) {
+	if c.FixedPolicy != nil {
+		return "", false
+	}
 	if !c.validStrategyPreset() {
 		return "", false
 	}

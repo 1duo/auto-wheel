@@ -17,6 +17,7 @@ type FixedStore interface {
 }
 
 var ErrFixedSignalAbstained = errors.New("fixed signal was durably abstained")
+var ErrFixedJournalDurability = errors.New("fixed journal durability is uncertain; restart required")
 
 // FixedController is called by the serialized account cycle. Provider reads may
 // run in parallel; these journal transitions must remain serialized.
@@ -59,6 +60,10 @@ func (c *FixedController) check() error {
 func (c *FixedController) save(f FixedPolicyState) error {
 	next := *c.state
 	next.Fixed = &f
+	return c.saveState(next)
+}
+
+func (c *FixedController) saveState(next State) error {
 	if err := next.Validate(); err != nil {
 		return err
 	}
@@ -68,13 +73,14 @@ func (c *FixedController) save(f FixedPolicyState) error {
 	*c.state = next
 	if err := c.store.Save(next); err != nil {
 		c.poisoned = true
-		return err
+		return errors.Join(ErrFixedJournalDurability, err)
 	}
 	return nil
 }
 
 func (c *FixedController) copy() FixedPolicyState {
 	f := *c.state.Fixed
+	f.Contracts = maps.Clone(f.Contracts)
 	if f.Batch != nil {
 		b := *f.Batch
 		b.Managed = slices.Clone(b.Managed)

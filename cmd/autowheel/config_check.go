@@ -39,6 +39,6 @@ func writeConfigCheck(out io.Writer, c wheel.Config) error {
 	if c.Account != "" {
 		r.AccountLast4 = c.Account[max(0, len(c.Account)-4):]
 	}
-	r.Config.Account = ""
+	r.Config = c.PublicCopy()
 	return json.NewEncoder(out).Encode(r)
 }

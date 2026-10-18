@@ -50,6 +50,7 @@ type status struct {
 	Coordinator           *sharedclient.Status      `json:"coordinator,omitempty"`
 	PendingSelectionMode  wheel.SelectionMode       `json:"pending_selection_mode,omitempty"`
 	PendingStrategyPreset string                    `json:"pending_strategy_preset,omitempty"`
+	FixedBatch            *wheel.FixedBatch         `json:"fixed_signal_batch,omitzero"`
 }
 
 func main() {
@@ -210,7 +211,17 @@ func run() error {
 	if err = j.Save(st); err != nil {
 		return err
 	}
+	var fixed *wheel.FixedController
+	if c.FixedPolicy != nil {
+		fixed, err = wheel.NewFixedController(c.FixedPolicy.Spec, &st, j)
+		if err != nil {
+			return err
+		}
+	}
 	if cmd == "adopt" || cmd == "recover" {
+		if cmd == "adopt" && (c.FixedPolicy != nil || st.Fixed != nil) {
+			return errors.New("fixed policy cannot adopt external or legacy stock")
+		}
 		if cmd == "adopt" && c.CoordinatorSocket != "" {
 			return errors.New("shared account inventory must be adopted through the coordinator's ownership proof")
 		}
@@ -273,6 +284,9 @@ func run() error {
 		s.AccountInfo = lastAccountInfo
 		s.LiveCapable = activation.Capable
 		s.LiveReadiness = readiness
+		if st.Fixed != nil {
+			s.FixedBatch = st.Fixed.Batch
+		}
 		mu.Lock()
 		current = s
 		mu.Unlock()
@@ -368,6 +382,90 @@ func run() error {
 			return nil
 		}
 		lastBroker = new(snapshot)
+		if fixed != nil {
+			blocked := func(cause error) error {
+				readiness = &liveReadiness{At: time.Now(), Policy: wheel.FixedConservativePolicy, Reason: cause.Error()}
+				s.Stage, s.Reason = "blocked", cause.Error()
+				update(s)
+				if errors.Is(cause, wheel.ErrFixedJournalDurability) {
+					return cause
+				}
+				return nil
+			}
+			if err = tradePulseIsolation(c, retired); err != nil {
+				return blocked(err)
+			}
+			if err = fixed.BindNative(c, snapshot, time.Now()); err != nil {
+				return blocked(err)
+			}
+			if err = fixed.ReconcileNative(c, snapshot, time.Now()); err != nil {
+				return blocked(err)
+			}
+			if err = fixed.Recover(time.Now()); err != nil {
+				return blocked(err)
+			}
+			signalAt, executionAt, latestAt, entryDay := wheel.FixedEntryTimes(time.Now())
+			if entryDay && !time.Now().Before(signalAt) && time.Now().Before(executionAt) {
+				if st.Fixed.Batch == nil || st.Fixed.Batch.Day != signalAt.Format(time.DateOnly) {
+					if err = fixed.Begin(c.FixedPolicy.Roster, time.Now()); err != nil {
+						return blocked(err)
+					}
+					if err = captureFixed(cycleCtx, fixed, &st, b, time.Now); err != nil {
+						return blocked(err)
+					}
+				}
+				// Do not spend the original capture minute on compatibility scans.
+				s.Stage, s.Reason = "fixed_signal_prepared", "Weekly source cohort saved; waiting for its execution clock"
+				update(s)
+				return nil
+			}
+			if activation.Capable && (readiness == nil || !readiness.Ready || time.Since(readiness.At) > 20*time.Minute) {
+				checked := fixedPreflight(cycleCtx, c, fixed, &st, b, snapshot)
+				snapshot, err = b.Snapshot(cycleCtx)
+				lastAccountInfo, lastBroker = b.AccountInfo, new(snapshot)
+				if err != nil {
+					return blocked(err)
+				}
+				if err = fixed.ReconcileNative(c, snapshot, time.Now()); err != nil {
+					return blocked(err)
+				}
+				readiness = &checked
+				if !checked.Ready {
+					s.Stage, s.Reason = "blocked", checked.Reason
+					update(s)
+					return nil
+				}
+			}
+			if !entryDay || time.Now().Before(executionAt) || time.Now().After(latestAt) {
+				s.Stage, s.Reason = "fixed_holding", "Reconciled own lifecycles; waiting for the next weekly entry clock"
+				update(s)
+				return nil
+			}
+			if s.Mode != "live" || halted || readiness == nil || !readiness.Ready {
+				s.Stage, s.Reason = "halted", "Fixed signals remain read-only until authenticated native activation"
+				update(s)
+				return nil
+			}
+			s.Stage = "fixed_holding"
+			if st.Fixed.Batch != nil {
+				for _, signal := range st.Fixed.Batch.Signals {
+					if signal.Phase != "ready" {
+						continue
+					}
+					if err = fixed.ExecuteNative(cycleCtx, c, b, signal.Symbol, time.Now); err != nil {
+						return blocked(err)
+					}
+					s.Stage, s.Reason = "submitted", "One fixed-policy opening submitted; waiting for broker reconciliation"
+					select {
+					case wake <- struct{}{}:
+					default:
+					}
+					break
+				}
+			}
+			update(s)
+			return nil
+		}
 		if err = wheel.ReconcileForConfig(c, &st, snapshot, time.Now()); err != nil {
 			s.Stage = "blocked"
 			readiness = &liveReadiness{At: time.Now(), Reason: err.Error()}
@@ -546,6 +644,9 @@ func run() error {
 		return s
 	}
 	profit := &profitControl{activation: activation, config: c, token: *token, state: &st, store: j, cycleMu: &cycleMu, submitMu: &submitMu, read: readStatus, wake: wake}
+	if c.FixedPolicy != nil {
+		profit = nil // The conservative hold policy has no discretionary close route.
+	}
 	mux := operatorAPI(readStatus, mode, *stateDir, wake, operatorFeatures{Activation: activation, SubmitMu: &submitMu, Profit: profit})
 	server := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 40 * time.Second, IdleTimeout: 30 * time.Second}
 	serverErr := make(chan error, 1)
@@ -557,12 +658,16 @@ func run() error {
 		if err = cycle(); err != nil {
 			return err
 		}
+		poll := ticker.C
+		if c.FixedPolicy != nil {
+			poll = time.After(cycleDelay(c, time.Now()))
+		}
 		select {
 		case <-ctx.Done():
 			return nil
 		case err = <-serverErr:
 			return err
-		case <-ticker.C:
+		case <-poll:
 		case <-wake:
 		}
 	}

@@ -52,32 +52,33 @@ const (
 )
 
 type Config struct {
-	Account              string        `json:"account_number"`
-	OrderCoveragePolicy  string        `json:"order_coverage_policy,omitempty"`
-	ExclusiveOrdersSince time.Time     `json:"exclusive_orders_since,omitzero"`
-	TradePulseStateDir   string        `json:"tradepulse_state_dir,omitempty"`
-	RetiredTradePulse    string        `json:"retired_tradepulse_handoff,omitempty"`
-	CoordinatorSocket    string        `json:"coordinator_socket,omitempty"`
-	CoordinatorPolicy    string        `json:"coordinator_policy_hash,omitempty"`
-	Symbols              []string      `json:"symbols"`
-	MaxSymbols           int           `json:"max_symbols"`
-	SymbolLimitScope     string        `json:"symbol_limit_scope"`
-	MaxCollateral        Cents         `json:"max_collateral_cents"`
-	Reserve              Cents         `json:"cash_reserve_cents"`
-	Fee                  Cents         `json:"fee_per_contract_cents"`
-	MinBid               Cents         `json:"min_bid_cents"`
-	MinOI                int           `json:"min_open_interest"`
-	MaxSpreadBPS         int           `json:"max_spread_bps"`
-	PutMinDelta          float64       `json:"put_min_delta"`
-	PutMaxDelta          float64       `json:"put_max_delta"`
-	CallMinDelta         float64       `json:"call_min_delta"`
-	CallMaxDelta         float64       `json:"call_max_delta"`
-	AllowBelowCost       bool          `json:"allow_calls_below_cost"`
-	MaxQuoteAgeSeconds   int           `json:"max_quote_age_seconds"`
-	MaxDays              int           `json:"max_dte_days"`
-	PollSeconds          int           `json:"poll_seconds"`
-	SelectionMode        SelectionMode `json:"selection_mode,omitempty"`
-	StrategyPreset       string        `json:"strategy_preset,omitempty"`
+	Account              string             `json:"account_number"`
+	OrderCoveragePolicy  string             `json:"order_coverage_policy,omitempty"`
+	ExclusiveOrdersSince time.Time          `json:"exclusive_orders_since,omitzero"`
+	TradePulseStateDir   string             `json:"tradepulse_state_dir,omitempty"`
+	RetiredTradePulse    string             `json:"retired_tradepulse_handoff,omitempty"`
+	CoordinatorSocket    string             `json:"coordinator_socket,omitempty"`
+	CoordinatorPolicy    string             `json:"coordinator_policy_hash,omitempty"`
+	Symbols              []string           `json:"symbols"`
+	MaxSymbols           int                `json:"max_symbols"`
+	SymbolLimitScope     string             `json:"symbol_limit_scope"`
+	MaxCollateral        Cents              `json:"max_collateral_cents"`
+	Reserve              Cents              `json:"cash_reserve_cents"`
+	Fee                  Cents              `json:"fee_per_contract_cents"`
+	MinBid               Cents              `json:"min_bid_cents"`
+	MinOI                int                `json:"min_open_interest"`
+	MaxSpreadBPS         int                `json:"max_spread_bps"`
+	PutMinDelta          float64            `json:"put_min_delta"`
+	PutMaxDelta          float64            `json:"put_max_delta"`
+	CallMinDelta         float64            `json:"call_min_delta"`
+	CallMaxDelta         float64            `json:"call_max_delta"`
+	AllowBelowCost       bool               `json:"allow_calls_below_cost"`
+	MaxQuoteAgeSeconds   int                `json:"max_quote_age_seconds"`
+	MaxDays              int                `json:"max_dte_days"`
+	PollSeconds          int                `json:"poll_seconds"`
+	SelectionMode        SelectionMode      `json:"selection_mode,omitempty"`
+	StrategyPreset       string             `json:"strategy_preset,omitempty"`
+	FixedPolicy          *FixedPolicyConfig `json:"fixed_policy,omitzero"`
 
 	PriorityProfitClose *ProfitCloseTarget `json:"priority_profit_close,omitempty"`
 }
@@ -92,6 +93,9 @@ func DefaultConfig() Config {
 // A zero ceiling uses broker available cash, without a fixed per-slot allocation.
 // Positive ceilings retain the existing equal-slot allocation.
 func (c Config) SymbolCollateralLimit() Cents {
+	if c.FixedPolicy != nil {
+		return Cents(c.FixedPolicy.Spec.Limits.Symbol)
+	}
 	if c.MaxCollateral < 0 || c.MaxCollateral > MaxMoney || c.MaxSymbols < 1 || c.MaxSymbols > 3 {
 		return 0
 	}
@@ -118,6 +122,9 @@ func FitsSymbolCollateral(collateral, fee, limit Cents) bool {
 // EffectiveSelectionMode reports the active put-selection discipline.
 // Empty preserves legacy balanced behavior for existing configs.
 func (c Config) EffectiveSelectionMode() SelectionMode {
+	if c.FixedPolicy != nil {
+		return SelectionConservative
+	}
 	if c.SelectionMode == "" {
 		return SelectionBalanced
 	}
@@ -127,6 +134,9 @@ func (c Config) EffectiveSelectionMode() SelectionMode {
 // WithSelectionMode returns a copy with the named put-selection discipline
 // and its exact put delta bands. All other settings are unchanged.
 func (c Config) WithSelectionMode(mode SelectionMode) (Config, error) {
+	if c.FixedPolicy != nil {
+		return Config{}, errors.New("fixed policy requires an explicit configuration transition")
+	}
 	c.StrategyPreset = ""
 	switch mode {
 	case SelectionConservative:
@@ -236,6 +246,9 @@ func (c Config) Validate() error {
 				return errors.New("account number must contain digits")
 			}
 		}
+	}
+	if c.FixedPolicy != nil {
+		return c.FixedPolicy.validate(c)
 	}
 	return nil
 }

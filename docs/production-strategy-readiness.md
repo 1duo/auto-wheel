@@ -62,7 +62,8 @@ Preserve expiry ties, strike ties, missing-target behavior and exclusions of
 QCOM, META and FB. A bad quote for the chosen identity skips an opening; it
 cannot trigger a search for a nicer historical fill. The new contract kernel
 and historical parity command are the first implemented bridge components.
-They are not connected to live order submission yet.
+The opt-in native fixed-policy path now uses those components. Installed
+production still uses its old configuration; the new path has not been activated.
 
 Select at the signal clock and refresh that same identity before execution.
 The historical account does not replace its signal contract when the stock
@@ -222,12 +223,57 @@ The legacy order path is also explicitly fenced for a bound fixed journal.
 Rollback must therefore use a reader compatible with this versioned schema and
 remain paused; stripping the binding or forcing an older reader is not rollback.
 
-These transitions are called by the serialized account controller. Source reads
-may run in parallel, but journal updates remain serialized. This layer has no
-broker submission capability. Timed daemon wiring, current broker reconciliation,
-native pre-submit cash/ownership/deliverable review, and the full order/recovery
-adapter are still incomplete. No native preset or release is approved by this
-component implementation.
+The native daemon now has a separate opt-in `fixed_policy` configuration block
+containing its financial spec and source-bound roster. Native account, reserve,
+capital and option-fee fields must agree with that spec. Its per-symbol limit is
+explicit. The fixed block owns expiry, distance, spread and cadence rules; the
+legacy delta/OI/ROI fields do not select contracts on this path. Legacy selection
+and submission are fenced, mode switches are rejected, and discretionary profit
+close controls are unavailable. The menubar describes floor + hold separately.
+Public status and configuration reports redact the nested account as well.
+This first policy binding rejects changes to its financial digest even while
+flat. A future capital/mode change requires an explicit qualified journal-policy
+handover; editing the configuration or stripping a binding is not that handover.
+Source evidence and the next dated roster can refresh without changing the
+financial policy, while every weekly batch retains its own source binding.
+
+The serialized daemon reserves capture before reading sources, runs at most three
+source reads concurrently and saves each result as it arrives. Its scheduler
+wakes for the weekly signal and execution clocks instead of relying on a
+five-minute poll to land inside a one-minute capture bucket. Late or interrupted
+source results abstain; they never create a later replacement signal.
+
+The dedicated native executor claims once, reconciles fresh account facts,
+refreshes the same identity, obtains account-specific deliverable and actual
+fee/collateral review, then reconciles cash and inventory again. It persists the
+exact ref_id before transport. The existing submission/activation mutex also
+checks the weekly deadline immediately before transport. Unknown outcomes retain
+the intent; only a proved pre-transport rejection can clear an unsent intent.
+An uncertain journal save fences the controller and requires restart from disk.
+
+Exact metadata for each owned open option survives restart, including a covered
+call's strike and chain. Reconciliation retains the existing disclosed own-put
+assignment inference and at-least-24-hour reporting delay. Put and stock reporting
+that overlaps freezes openings. Unresolved settlement globally delays openings;
+available cash already excludes existing collateral holds. Stock exposure uses
+gross acquisition price plus the declared fee ceiling. Those conservative
+operational bounds and actual fill/reporting delays can change the live path;
+the historical returns are not a replay of this native adapter.
+
+Fixed-policy readiness requires an actual current opening to pass the source,
+deliverable, funding and broker fee review. A compatibility preview neither
+captures nor claims the weekly signal and cannot be passed to the executor.
+Readiness is tagged with the fixed policy, so legacy readiness cannot authorize
+it. Actual execution repeats current checks and remains release/config-bound.
+
+Native fixture checks cover the whole put → fill → settled assignment → covered
+call → settled callaway lifecycle, metadata drift, changed cash after review,
+stale books, a missed deadline, failed intent durability, lost responses and
+restart without resubmission. These are integration fixtures, not new financial
+simulations or evidence of live broker fills. Fresh broker qualification of the
+exact candidate, compatible paused rollback and release/config approval remain
+required before installation or activation. No installed trading software,
+configuration, activation or holdings were changed by this preparation.
 
 Use three precise labels:
 
@@ -261,9 +307,10 @@ At this checkpoint the source baseline, read-only probe, contract kernel,
 21,270 matching frozen selector decisions, 18,858 admission comparisons, weekly
 clock calculation, exact-identity refresh and real paginated market observation
 are implemented and verified. P1's source/menu and arithmetic components are
-complete. The versioned native journal/queue and declared assignment-cost ceiling
-layer is implemented. Daemon scheduling and broker/order-adapter integration,
-account deliverable review, and release/recovery qualification remain open, along with
-the remaining numbered integration gates. No installed production software or
-configuration was changed or activated. Source code changes are isolated in the
-managed worktree.
+complete. The versioned journal/queue, declared assignment-cost ceiling, dedicated
+native execution/reconciliation and timed daemon path are implemented. The exact
+Linux source/build verification and the remaining release/recovery qualification
+must be bound to the final code snapshot. Actual fresh account-specific broker
+qualification is still pending. There is no native balanced TP75 or aggressive
+stock-entry implementation yet. Source changes remain isolated in the managed
+worktree; production stays unchanged and paused.

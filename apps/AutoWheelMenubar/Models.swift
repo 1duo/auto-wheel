@@ -30,6 +30,7 @@ struct WheelConfig: Decodable {
     let max_dte_days: Int
     let poll_seconds: Int
     let selection_mode: String?
+    let fixed_policy: FixedPolicyDescriptor?
 	let order_coverage_policy: String?
 
 	var restrictedOrders: Bool { order_coverage_policy == "exclusive_standard" }
@@ -37,9 +38,18 @@ struct WheelConfig: Decodable {
     // Omitted/empty legacy config means balanced. Unknown raw values stay nil
     // so the selector disables instead of mislabeling.
     var selectionMode: SelectionMode? {
+        if let fixed_policy {
+            return fixed_policy.spec.id == "conservative-rd1-floor-hold-v1" ? .conservative : nil
+        }
         guard let raw = selection_mode, !raw.isEmpty else { return .balanced }
         return SelectionMode(rawValue: raw)
     }
+}
+
+struct FixedPolicyDescriptor: Decodable {
+    struct Spec: Decodable { let id: String }
+    let spec: Spec
+    var label: String { spec.id == "conservative-rd1-floor-hold-v1" ? "Conservative · floor + hold" : "Unknown fixed policy" }
 }
 
 struct WheelPosition: Decodable {

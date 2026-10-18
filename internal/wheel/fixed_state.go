@@ -14,6 +14,44 @@ import (
 
 const FixedConservativePolicy = "conservative-rd1-floor-hold-v1"
 
+type FixedPolicyConfig struct {
+	Spec   FixedPolicySpec `json:"spec"`
+	Roster FixedRoster     `json:"roster"`
+}
+
+func (f FixedPolicyConfig) validate(c Config) error {
+	if err := f.Spec.Validate(); err != nil {
+		return err
+	}
+	if _, err := fixedOrder(nil, f.Roster.Symbols); err != nil {
+		return err
+	}
+	from, err := time.Parse(time.DateOnly, f.Roster.From)
+	through, endErr := time.Parse(time.DateOnly, f.Roster.Through)
+	if err != nil || endErr != nil || from.After(through) || f.Roster.KnownAt.IsZero() ||
+		!fixedSHA(f.Roster.SourceSHA) || !slices.Equal(c.Symbols, f.Roster.Symbols) ||
+		c.Account != f.Spec.Account || c.OrderCoveragePolicy != "exclusive_standard" ||
+		c.CoordinatorSocket != "" || c.PriorityProfitClose != nil || c.StrategyPreset != "" || c.SelectionMode != "" ||
+		c.MaxSymbols != 3 || c.SymbolLimitScope != "managed" || c.MaxCollateral != Cents(f.Spec.Limits.Account) ||
+		c.Reserve != Cents(f.Spec.Limits.Reserve) || c.Fee != f.Spec.OptionFeeBudget || c.MaxQuoteAgeSeconds != f.Spec.MaxQuoteAge {
+		return errors.New("invalid fixed-policy roster or native financial/configuration binding")
+	}
+	return nil
+}
+
+// PublicCopy redacts both copies of the account without mutating live config.
+func (c Config) PublicCopy() Config {
+	c.Account = ""
+	c.Symbols = slices.Clone(c.Symbols)
+	if c.FixedPolicy != nil {
+		f := *c.FixedPolicy
+		f.Spec.Account = ""
+		f.Roster.Symbols = slices.Clone(f.Roster.Symbols)
+		c.FixedPolicy = &f
+	}
+	return c
+}
+
 // FixedPolicySpec describes the financial policy. Source evidence may be
 // refreshed without changing its financial digest; native release/config
 // activation and actual broker review are still required outside this type.
@@ -94,11 +132,12 @@ type FixedBatch struct {
 }
 
 type FixedPolicyState struct {
-	Version   int             `json:"version"`
-	Spec      FixedPolicySpec `json:"spec"`
-	PolicySHA string          `json:"policy_sha256"`
-	BoundAt   time.Time       `json:"bound_at"`
-	Batch     *FixedBatch     `json:"batch,omitzero"`
+	Version   int               `json:"version"`
+	Spec      FixedPolicySpec   `json:"spec"`
+	PolicySHA string            `json:"policy_sha256"`
+	BoundAt   time.Time         `json:"bound_at"`
+	Batch     *FixedBatch       `json:"batch,omitzero"`
+	Contracts map[string]Option `json:"open_contracts,omitempty"`
 }
 
 // FixedSignalEvidence is input to signal selection, not an order capability.
@@ -179,6 +218,21 @@ func (f FixedPolicyState) validate(s State) error {
 			!known || p.PutOpenedAt.Before(entry) || p.PutOpenedAt.After(latest) ||
 			p.OwnedShares == 100 && (p.InventoryAt.IsZero() || p.InventoryAt.Before(p.PutOpenedAt)) {
 			return errors.New("fixed policy contains unsupported inventory")
+		}
+		if id := p.PutID + p.CallID; id != "" {
+			op, found := f.Contracts[symbol]
+			if !found || op.ID != id || op.Symbol != symbol || op.Quantity != 1 || op.ChainID == "" ||
+				op.Strike <= 0 || op.Strike > MaxMoney/100 ||
+				p.PutID != "" && (op.Kind != "put" || op.Strike != p.PutStrike || op.Expiry != p.PutExpiry) ||
+				p.CallID != "" && (op.Kind != "call" || op.Expiry != p.CallExpiry) {
+				return errors.New("fixed owned option lacks exact contract metadata")
+			}
+		}
+	}
+	for symbol, op := range f.Contracts {
+		p, found := s.Positions[symbol]
+		if !found || op.ID == "" || op.ID != p.PutID && op.ID != p.CallID {
+			return errors.New("fixed contract metadata outlived its owned position")
 		}
 	}
 	if f.Batch == nil {

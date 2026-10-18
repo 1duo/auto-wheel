@@ -868,6 +868,13 @@ func (b *Broker) Submit(ctx context.Context, a wheel.Candidate, ref string) (str
 // second read after transport. Its caller persists it before acknowledging the
 // strategy; a lost read cannot erase an already observed order identity.
 func (b *Broker) SubmitEvidence(ctx context.Context, a wheel.Candidate, ref string) (string, any, error) {
+	return b.submitEvidence(ctx, a, ref, time.Time{})
+}
+
+func (b *Broker) submitEvidence(ctx context.Context, a wheel.Candidate, ref string, fixedDeadline time.Time) (string, any, error) {
+	if (b.Config.FixedPolicy != nil) != !fixedDeadline.IsZero() {
+		return "", nil, wheel.ErrNotSubmitted
+	}
 	if b.SubmitMu != nil {
 		b.SubmitMu.Lock()
 		defer b.SubmitMu.Unlock()
@@ -888,6 +895,9 @@ func (b *Broker) SubmitEvidence(ctx context.Context, a wheel.Candidate, ref stri
 		}
 		id, err := b.SubmitProvider(ctx, a, ref)
 		return id, nil, err
+	}
+	if !fixedDeadline.IsZero() && !fixedDeadlineAllows(fixedDeadline, time.Now()) {
+		return "", nil, wheel.ErrNotSubmitted
 	}
 	v, err := b.MCP.Call(ctx, "place_option_order", args)
 	if err != nil {

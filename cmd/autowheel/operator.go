@@ -21,8 +21,7 @@ import (
 // Account numbers and credentials never leave the daemon through its operator API.
 func operatorStatus(s status, c wheel.Config, token, dir string) status {
 	s.AccountConfigured = c.Account != ""
-	c.Account = ""
-	s.Config = c
+	s.Config = c.PublicCopy()
 	info, err := os.Lstat(token)
 	s.TokenPresent = err == nil && info.Mode().IsRegular() && info.Mode().Perm()&0077 == 0
 	_, err = os.Lstat(filepath.Join(dir, "HALT"))

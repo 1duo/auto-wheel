@@ -17,6 +17,7 @@ import (
 )
 
 type liveReadiness struct {
+	Policy              string            `json:"policy,omitempty"`
 	At                  time.Time         `json:"at"`
 	Ready               bool              `json:"ready"`
 	Reason              string            `json:"reason,omitempty"`
@@ -48,6 +49,9 @@ func activationReady(s status) bool {
 		return false
 	}
 	if s.Config.OrderCoveragePolicy == "exclusive_standard" && (s.LiveReadiness.OrderCoveragePolicy != "exclusive_standard" || s.Broker.OrderCoveragePolicy != "exclusive_standard" || s.LiveReadiness.CoverageWarning != wheel.StandardOrderWarning) {
+		return false
+	}
+	if s.Config.FixedPolicy != nil && s.LiveReadiness.Policy != s.Config.FixedPolicy.Spec.ID {
 		return false
 	}
 	checkAge, snapshotAge := time.Since(s.LiveReadiness.At), time.Since(s.Broker.At)

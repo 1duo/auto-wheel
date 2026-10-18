@@ -89,7 +89,7 @@ struct WheelView: View {
                     .help("Enable automated real orders under the configured limits. Switching off persists a pause; accepted orders continue.")
             }.padding(.horizontal, 14).padding(.vertical, 8)
             ForEach((s.positions ?? [:]).keys.sorted(), id: \.self) { symbol in
-                if s.positions?[symbol]?.put_id != nil {
+                if s.config.fixed_policy == nil && s.positions?[symbol]?.put_id != nil {
                     actionRow("Close for Profit · \(symbol)", symbol: "checkmark.circle") {
                         Task { await model.takeProfit(symbol) }
                     }
@@ -97,7 +97,10 @@ struct WheelView: View {
                     .help("Submit one buy-to-close order capped at the fresh ask, only if profit remains after fee allowances. No additional dialog. An existing live session continues after reconciliation.")
                 }
             }
-            if let currentSelection = s.config.selectionMode {
+            if let fixed = s.config.fixed_policy {
+                row("Selection", fixed.label)
+                detail("This policy is bound to its release and configuration. Legacy mode switches and discretionary closes are unavailable.")
+            } else if let currentSelection = s.config.selectionMode {
                 HStack(spacing: 8) {
                     Label("Selection", systemImage: "arrow.triangle.2.circlepath")
                         .font(MenuFont.action)
@@ -119,7 +122,9 @@ struct WheelView: View {
             } else {
                 row("Selection", "Unknown")
             }
-            detail("Selection changes pause trading and restart the msi service to load. Live activation still needs fresh readiness.")
+            if s.config.fixed_policy == nil {
+                detail("Selection changes pause trading and restart the msi service to load. Live activation still needs fresh readiness.")
+            }
             if s.hasPendingSelection {
                 menuNotice("Selection \(s.pending_selection_mode ?? "change") pending · restart msi service, then refresh to verify. Trading stays paused.", symbol: "exclamationmark.triangle", color: .yellow)
             }
@@ -316,6 +321,23 @@ struct WheelView: View {
 
     @ViewBuilder private var strategy: some View {
         if let s = model.status, let c = model.status?.config {
+            if let fixed = c.fixed_policy {
+                section(fixed.label) {
+                    detail("Choose an expiry 21–45 calendar days away, closest to 30 days. Puts use strikes at or below 90% of the underlying midpoint; calls use at least 105%. Choose the identity before checking liquidity. A missing target skips the symbol.")
+                    detail("Capture once 31 minutes before the regular close on the first exchange session of the week. Refresh that same contract for execution one minute later, within a four-minute window. Restarting cannot recreate the signal.")
+                    detail("Write calls only on the own settled 100-share lot, above its acquisition price plus declared fee allowances. Hold stock otherwise. Open losses remain exposed; a sale floor does not limit portfolio drawdown.")
+                }
+                section("Limits and execution") {
+                    row("Managed symbols", "At most 3 · one contract / 100 shares each")
+                    row("Capital ceiling", money(c.max_collateral_cents, decimals: false))
+                    row("Cash reserve", money(c.cash_reserve_cents, decimals: false))
+                    row("Option fee allowance", money(c.fee_per_contract_cents))
+                    row("Maximum quote age", "\(c.max_quote_age_seconds) seconds")
+                    detail("Maximum midpoint-relative spread: 15% for stock and option. Positive bid size, tick, exact deliverable and account review are required. Delta and open interest are unused. Orders are serialized; unknown submissions block new orders and are never retried.")
+                    detail("Assignment and callaway retain the existing reporting delay of at least 24 hours. Pausing does not cancel accepted orders. Fresh native readiness and authenticated activation are required for the exact release and configuration.")
+                }
+                section("Opening roster") { detail(c.symbols.joined(separator: " · ")).font(MenuFont.detailEmphasis) }
+            } else {
             if s.hasPendingSelection {
                 menuNotice("Selection \(s.pending_selection_mode ?? "change") pending · restart msi service, then refresh to verify. Trading stays paused.", symbol: "exclamationmark.triangle", color: .yellow)
             }
@@ -359,6 +381,7 @@ struct WheelView: View {
             }
             section("Current scope") {
                 detail("No rolling, automatic repricing, buybacks, stop loss, earnings filter, or 0DTE. Delta is a ranking input, not a guaranteed assignment probability. The 24-hour handoff can delay capital reuse. A price decline can exceed all premiums collected.")
+            }
             }
         } else {
             detail("Connect to msi to see the exact runtime configuration.")

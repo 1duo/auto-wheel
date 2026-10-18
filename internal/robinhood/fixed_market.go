@@ -19,6 +19,7 @@ type FixedMarketObservation struct {
 	Mode              string                    `json:"policy_mode"`
 	Kind              string                    `json:"option_kind"`
 	Symbol            string                    `json:"symbol"`
+	ChainID           string                    `json:"chain_id"`
 	Stock             contractpolicy.Book       `json:"underlying_book"`
 	BidAt             time.Time                 `json:"underlying_bid_at"`
 	AskAt             time.Time                 `json:"underlying_ask_at"`
@@ -40,17 +41,17 @@ type FixedMarketObservation struct {
 // ObserveFixedPolicy performs only get_* reads. Missing books are not replaced,
 // Greek/OI values are not needed or invented, and no broker review is performed.
 func (b *Broker) ObserveFixedPolicy(ctx context.Context, mode, kind, symbol string, clock func() time.Time) (FixedMarketObservation, error) {
-	return b.fixedMarket(ctx, mode, kind, symbol, nil, clock)
+	return b.fixedMarket(ctx, mode, kind, symbol, nil, false, clock)
 }
 
 // RefreshFixedIdentity refreshes the signal's exact contract. It never chooses
 // another strike from the execution-time spot. The caller still needs the
 // original signal, cadence, account, floor, funding and broker-review gates.
 func (b *Broker) RefreshFixedIdentity(ctx context.Context, mode string, chosen contractpolicy.Contract, clock func() time.Time) (FixedMarketObservation, error) {
-	return b.fixedMarket(ctx, mode, chosen.Kind, chosen.Symbol, &chosen, clock)
+	return b.fixedMarket(ctx, mode, chosen.Kind, chosen.Symbol, &chosen, false, clock)
 }
 
-func (b *Broker) fixedMarket(ctx context.Context, mode, kind, symbol string, pinned *contractpolicy.Contract, clock func() time.Time) (FixedMarketObservation, error) {
+func (b *Broker) fixedMarket(ctx context.Context, mode, kind, symbol string, pinned *contractpolicy.Contract, reviewDeliverable bool, clock func() time.Time) (FixedMarketObservation, error) {
 	var out FixedMarketObservation
 	if clock == nil {
 		return out, errors.New("fixed policy needs an observation clock")
@@ -110,7 +111,7 @@ func (b *Broker) fixedMarket(ctx context.Context, mode, kind, symbol string, pin
 	if err != nil {
 		return out, err
 	}
-	out = FixedMarketObservation{Day: day, Mode: mode, Kind: kind, Symbol: symbol, Stock: contractpolicy.Book{Bid: int64(bid), Ask: int64(ask)}, Structural100: true, IdentityRefresh: pinned != nil}
+	out = FixedMarketObservation{Day: day, Mode: mode, Kind: kind, Symbol: symbol, ChainID: text(chain, "id"), Stock: contractpolicy.Book{Bid: int64(bid), Ask: int64(ask)}, Structural100: true, IdentityRefresh: pinned != nil}
 	if out.BidAt, err = timestamp(stocks[0], "venue_bid_time"); err != nil {
 		return out, err
 	}
@@ -237,6 +238,12 @@ func (b *Broker) fixedMarket(ctx context.Context, mode, kind, symbol string, pin
 	out.Tick, err = money(ticks, tick)
 	if err != nil || out.Tick < 1 {
 		return out, errors.New("chosen fixed-policy tick invalid")
+	}
+	if reviewDeliverable {
+		if err = b.verifyDeliverable(ctx, chain, out.Choice.Expiry, []object{chosen}, kind); err != nil {
+			return out, err
+		}
+		out.DeliverableReview = true
 	}
 	out.At = clock()
 	if out.At.In(wheel.Eastern).Format(time.DateOnly) != day {
