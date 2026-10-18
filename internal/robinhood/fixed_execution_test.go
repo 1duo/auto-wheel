@@ -64,6 +64,24 @@ func TestFixedNativeRefreshRequiresActualDeliverable(t *testing.T) {
 	}
 }
 
+func TestFixedPreviewRetainsOldClocksWithoutEnablingRefresh(t *testing.T) {
+	at := time.Date(2026, 10, 2, 16, 0, 0, 0, time.UTC)
+	client := &fixedNativeClient{fixedMarketClient: fixedMarketFixture(at)}
+	client.chain["underlying_instruments"] = []any{object{"instrument": "/instruments/stock-id/", "symbol": "AAPL"}}
+	config := wheel.DefaultConfig()
+	config.Account = "12345678"
+	b := &Broker{MCP: client, Config: config}
+	chosen := contractpolicy.Contract{ID: "put-90", Symbol: "AAPL", Kind: "put", Expiry: "2026-10-30", Strike: 9000}
+	clock := func() time.Time { return at.Add(24 * time.Hour) }
+	preview, err := b.PreviewForFixed(t.Context(), chosen, clock)
+	if err != nil || !preview.Deliverable100 || !preview.Market.OptionAt.Equal(at) {
+		t.Fatal("compatibility changed source clocks or skipped actual deliverable proof", err)
+	}
+	if _, err := b.RefreshForFixed(t.Context(), chosen, clock); err == nil {
+		t.Fatal("old compatibility book became executable refresh evidence")
+	}
+}
+
 func TestFixedNativeTransportRequiresNativeControls(t *testing.T) {
 	for _, scenario := range []string{"no_activation_fence", "no_mutex", "shared_writer", "no_deadline"} {
 		t.Run(scenario, func(t *testing.T) {

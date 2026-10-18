@@ -135,6 +135,7 @@ struct AccountInfo: Decodable {
 struct LiveReadiness: Decodable {
     let at: String
     let ready: Bool
+    let scope: String?
     let reason: String?
     let verified_symbols: [String]?
     let unavailable_symbols: [String: String]?

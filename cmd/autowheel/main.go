@@ -63,7 +63,7 @@ func main() {
 
 func run() error {
 	if len(os.Args) < 2 {
-		return errors.New("usage: autowheel version|init|login|check-config|doctor|audit-account|run|once|adopt|recover")
+		return errors.New("usage: autowheel version|init|login|check-config|check-transition|doctor|audit-account|run|once|adopt|recover")
 	}
 	cmd := os.Args[1]
 	if cmd == "version" {
@@ -130,6 +130,27 @@ func run() error {
 			return errors.New("configuration check cannot enable trading")
 		}
 		return writeConfigCheck(os.Stdout, c)
+	}
+	if cmd == "check-transition" {
+		if *live || *liveCapable || *exclusive {
+			return errors.New("transition inspection cannot enable trading")
+		}
+		j, st, err := aruntime.OpenJournal(*stateDir)
+		if err != nil {
+			return err
+		}
+		defer j.Close()
+		if st.Account != c.Account {
+			return errors.New("transition journal and configured account differ")
+		}
+		digest, err := wheel.FixedLegacyDigest(st)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(os.Stdout).Encode(map[string]any{
+			"scope":               "journal_only; fresh broker agreement required before import",
+			"legacy_state_sha256": digest, "owned_symbols": slices.Sorted(maps.Keys(st.Positions)),
+			"broker_verified": false, "trading_authorized": false})
 	}
 	if cmd == "audit-account" {
 		if *live || *liveCapable || *exclusive {

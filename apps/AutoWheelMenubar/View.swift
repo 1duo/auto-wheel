@@ -132,6 +132,9 @@ struct WheelView: View {
             row("Target", "Linux msi · Robinhood MCP")
             row("Execution", s.mode == "live" ? "Live" : "Read only · orders disabled")
             row("Live Readiness", s.live_readiness.map { $0.ready ? (s.config.restrictedOrders ? "Passed · restricted standard orders" : "Passed · one-click activation") : "Checking / blocked" } ?? "Checking")
+            if s.config.fixed_policy != nil, s.live_readiness?.ready == true {
+                detail("Integration verified. Orders still wait for their weekly clock, fresh market data and current account checks.")
+            }
             if s.config.restrictedOrders {
                 menuNotice("Advanced/OCO visibility unknown. Keep this account exclusive to AutoWheel; no manual or contingent orders.", symbol: "exclamationmark.triangle", color: .yellow)
             }
@@ -335,6 +338,7 @@ struct WheelView: View {
                     row("Maximum quote age", "\(c.max_quote_age_seconds) seconds")
                     detail("Maximum midpoint-relative spread: 15% for stock and option. Positive bid size, tick, exact deliverable and account review are required. Delta and open interest are unused. Orders are serialized; unknown submissions block new orders and are never retried.")
                     detail("Assignment and callaway retain the existing reporting delay of at least 24 hours. Pausing does not cancel accepted orders. Fresh native readiness and authenticated activation are required for the exact release and configuration.")
+                    detail("Verified existing AutoWheel puts and 100-share lots remain managed through the policy transition and occupy the same three slots. Their current contracts stay unchanged; subsequent openings use this policy. External shares are excluded.")
                 }
                 section("Opening roster") { detail(c.symbols.joined(separator: " · ")).font(MenuFont.detailEmphasis) }
             } else {

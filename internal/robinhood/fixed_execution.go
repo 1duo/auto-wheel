@@ -19,11 +19,22 @@ func fixedDeadlineAllows(deadline, now time.Time) bool {
 // RefreshForFixed adds account-specific deliverable proof to the exact-identity
 // market refresh. Actual order review and current account funding follow later.
 func (b *Broker) RefreshForFixed(ctx context.Context, chosen contractpolicy.Contract, clock func() time.Time) (wheel.FixedExecutionEvidence, error) {
+	return b.refreshFixed(ctx, chosen, clock, true)
+}
+
+// PreviewForFixed qualifies identity and deliverable with actual source clocks.
+// It permits old books for non-trading compatibility only; RefreshForFixed and
+// every submission still require current executable source data.
+func (b *Broker) PreviewForFixed(ctx context.Context, chosen contractpolicy.Contract, clock func() time.Time) (wheel.FixedExecutionEvidence, error) {
+	return b.refreshFixed(ctx, chosen, clock, false)
+}
+
+func (b *Broker) refreshFixed(ctx context.Context, chosen contractpolicy.Contract, clock func() time.Time, requireFresh bool) (wheel.FixedExecutionEvidence, error) {
 	o, err := b.fixedMarket(ctx, "conservative", chosen.Kind, chosen.Symbol, &chosen, true, clock)
 	if err != nil {
 		return wheel.FixedExecutionEvidence{}, err
 	}
-	if o.Choice == nil || *o.Choice != chosen || !o.IdentityRefresh || !o.Structural100 || !o.DeliverableReview || !o.MarketFresh || !o.EntryBookUsable {
+	if o.Choice == nil || *o.Choice != chosen || !o.IdentityRefresh || !o.Structural100 || !o.DeliverableReview || requireFresh && !o.MarketFresh || !o.EntryBookUsable {
 		return wheel.FixedExecutionEvidence{}, errors.New("fixed native refresh lacks current exact contract or deliverable proof")
 	}
 	return wheel.FixedExecutionEvidence{ChainID: o.ChainID, Deliverable100: true,

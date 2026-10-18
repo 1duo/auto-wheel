@@ -8,10 +8,66 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	aruntime "autowheel/internal/runtime"
 	"autowheel/internal/wheel"
 )
+
+func TestTransitionCheckIsOfflineAndDoesNotRewriteInventory(t *testing.T) {
+	dir := t.TempDir()
+	c := wheel.DefaultConfig()
+	c.Account = "12345678"
+	config := filepath.Join(dir, "config.json")
+	if err := aruntime.AtomicJSON(config, c); err != nil {
+		t.Fatal(err)
+	}
+	state := filepath.Join(dir, "state")
+	at := time.Date(2026, 10, 16, 14, 7, 0, 0, wheel.Eastern)
+	st := wheel.NewState()
+	st.Account = c.Account
+	st.Positions["HOOD"] = wheel.Position{PutID: "own-put", PutExpiry: "2026-10-23", PutStrike: 8500,
+		PutOpenedAt: at, Provenance: "autowheel put fill own-ref"}
+	st.CompletedOrders = map[string]wheel.OrderRecord{"own-order": {Ref: "own-ref", Symbol: "HOOD", OptionID: "own-put", At: at, Filled: 1}}
+	if err := aruntime.AtomicJSON(filepath.Join(state, "journal.json"), st); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := os.ReadFile(filepath.Join(state, "journal.json"))
+	output, err := os.CreateTemp(dir, "transition-check-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer output.Close()
+	args, stdout := os.Args, os.Stdout
+	t.Cleanup(func() { os.Args, os.Stdout = args, stdout })
+	os.Stdout = output
+	baseArgs := []string{"autowheel", "check-transition", "--config", config, "--state", state}
+	os.Args = baseArgs
+	if err := run(); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := os.ReadFile(output.Name())
+	var report struct {
+		Digest string `json:"legacy_state_sha256"`
+		Broker bool   `json:"broker_verified"`
+		Trade  bool   `json:"trading_authorized"`
+	}
+	want, _ := wheel.FixedLegacyDigest(st)
+	if json.Unmarshal(raw, &report) != nil || report.Digest != want || report.Broker || report.Trade ||
+		strings.Contains(string(raw), c.Account) || strings.Contains(string(raw), "own-ref") {
+		t.Fatal("transition check changed its binding, authority or privacy")
+	}
+	after, _ := os.ReadFile(filepath.Join(state, "journal.json"))
+	if string(before) != string(after) {
+		t.Fatal("offline check rewrote the journal")
+	}
+	for _, flag := range []string{"--live", "--live-capable", "--exclusive-account"} {
+		os.Args = append(slices.Clone(baseArgs), flag)
+		if err := run(); err == nil {
+			t.Fatal("transition inspection accepted an activation flag")
+		}
+	}
+}
 
 func TestConfigCheckHasNoTradingOrHandoffEffects(t *testing.T) {
 	dir := t.TempDir()

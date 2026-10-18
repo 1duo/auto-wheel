@@ -18,6 +18,7 @@ import (
 
 type liveReadiness struct {
 	Policy              string            `json:"policy,omitempty"`
+	Scope               string            `json:"scope,omitempty"`
 	At                  time.Time         `json:"at"`
 	Ready               bool              `json:"ready"`
 	Reason              string            `json:"reason,omitempty"`

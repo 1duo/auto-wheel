@@ -1,5 +1,38 @@
 # Research candidates to production
 
+## Authorized existing-inventory transition, October 18
+
+The user authorized rollout while managing the existing normal one-lot AutoWheel
+lifecycles. They no longer need to finish before the policy switch. The private
+configuration binds `import_legacy_state_sha256` to the exact original account
+journal. `check-transition` produces this canonical digest without broker calls
+or financial mutations; it requires one completed own-put receipt per lifecycle,
+resolved submissions, and settled own inventory. A covered call also needs its
+own completed opening receipt.
+
+The single native fixed controller imports only after fresh broker account,
+option metadata, stock cost/availability and standard-order ownership agree.
+It retains the full original journal as immutable provenance inside its new
+binding. Existing puts and covered calls retain their exact contracts; assignment
+and callaway retain the reporting delay. Imported holdings count toward the
+same three slots and account cash/exposure limits. New calls on their settled
+stock and new puts use the fixed conservative policy and weekly clock. The
+old order writer stays fenced. The import exception cannot authorize another
+lifecycle, external shares, unknown submissions or peer inventory. TradePulse
+retirement, mask, native seal and lifetime lock remain required.
+
+Readiness now explicitly reports non-trading integration compatibility. Actual
+source timestamps remain intact. Outside market hours, old positive books can
+qualify the exact identity, standard deliverable and bounded broker fee/collateral
+review against a fresh account. Compatibility previews cannot be submitted or
+become weekly signals. Actual execution still requires fresh market books,
+fresh account facts, the original single-use signal, current broker review and
+the post-authentication guard. This permits a qualified weekend activation
+while all real orders remain inside the reviewed trading clock.
+
+The earlier flat-only migration proposal below is superseded by this exact own
+inventory transition. Historical research labels and returns are unchanged.
+
 The latest request starts a production preparation phase (October 18 UTC checkpoint). The historical
 results justify engineering and a bounded launch evaluation. They do not prove
 future returns, a future completed-loss probability, or live execution fidelity.
@@ -160,13 +193,10 @@ parameter search:
    when applying the research allocation limit. The new `CanOpen` checks that
    distinction and removes existing holds exactly once. Calls also fund their
    fee from existing cash; expected new premium is not available funding.
-5. Protect the three existing AutoWheel lifecycles, observed in AVGO, HOOD and
-   MSTR. The simple migration is to keep their installed management semantics
-   until broker-confirmed flatness, then switch opening policy. Do not adopt
-   those positions into the research cohort, discard unresolved expiry evidence,
-   force liquidation or apply a new TP rule to them. More complicated in-flight
-   policy migration is unnecessary for P1.
-   Bind the new policy and cost evidence to its journal while flat. Its weekly
+5. Protect existing AutoWheel lifecycles using the authorized exact-journal
+   transition described above. Preserve the original ownership receipts and
+   contracts; do not force liquidation or apply a new TP rule to them.
+   Bind the new policy and cost evidence to that verified journal. Its weekly
    signal queue needs a persistent consumed/expired state; a restart cannot
    create a fresh signal from a later price. Do not weaken the unknown-submission
    fence to make the queue advance. Handling multiple confirmed broker working
@@ -197,9 +227,10 @@ preset. They can use the same contract kernel during read-only integration.
 ## Evidence and launch labels
 
 The conservative journal/queue layer is now implemented. It stores a versioned
-policy binding in the existing atomic account journal and permits its initial
-binding only when old journal lifecycles, broker inventory and working orders
-are flat. A capture reservation precedes provider reads. Each original signal
+policy binding in the existing atomic account journal. Initial binding requires
+either flat inventory or the explicit exact own-journal transition above;
+unresolved submissions and working orders block either transition.
+A capture reservation precedes provider reads. Each original signal
 is then either durably prepared or explicitly abstained, sealed once and claimed
 at most once in frozen roster order. An invalid first observation cannot be
 replaced by a later favorable quote. Interrupted capture retains only choices

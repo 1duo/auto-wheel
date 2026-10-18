@@ -76,7 +76,7 @@ func captureFixed(ctx context.Context, control *wheel.FixedController, st *wheel
 }
 
 func fixedPreflight(ctx context.Context, config wheel.Config, control *wheel.FixedController, st *wheel.State, b *robinhood.Broker, s wheel.Snapshot) liveReadiness {
-	r := liveReadiness{At: time.Now(), Policy: wheel.FixedConservativePolicy,
+	r := liveReadiness{At: time.Now(), Policy: wheel.FixedConservativePolicy, Scope: "integration_only; orders require fresh market data",
 		OrderCoveragePolicy: "exclusive_standard", CoverageWarning: wheel.StandardOrderWarning, Unavailable: map[string]string{}}
 	day := r.At.In(wheel.Eastern).Format(time.DateOnly)
 	roster := config.FixedPolicy.Roster
@@ -105,7 +105,7 @@ func fixedPreflight(ctx context.Context, config wheel.Config, control *wheel.Fix
 			r.Unavailable[symbol] = "fixed identity menu or target unavailable"
 			continue
 		}
-		e, err := b.RefreshForFixed(ctx, *observation.Choice, time.Now)
+		e, err := b.PreviewForFixed(ctx, *observation.Choice, time.Now)
 		if err != nil {
 			r.Unavailable[symbol] = err.Error()
 			continue
@@ -118,7 +118,7 @@ func fixedPreflight(ctx context.Context, config wheel.Config, control *wheel.Fix
 		}
 		a, err := control.PreviewNative(config, e, s, time.Now())
 		if err == nil {
-			err = b.Review(ctx, a)
+			err = b.PreviewCheck(ctx, a)
 		}
 		if err != nil {
 			r.Unavailable[symbol] = err.Error()
@@ -128,7 +128,7 @@ func fixedPreflight(ctx context.Context, config wheel.Config, control *wheel.Fix
 		r.VerifiedSymbols = []string{symbol}
 		return r
 	}
-	r.Reason = "no fixed-policy opening passed current identity, deliverable, funding and fee review"
+	r.Reason = "no fixed-policy opening passed identity, deliverable, fresh account funding and fee compatibility review"
 	return r
 }
 

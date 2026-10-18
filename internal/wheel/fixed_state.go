@@ -15,13 +15,17 @@ import (
 const FixedConservativePolicy = "conservative-rd1-floor-hold-v1"
 
 type FixedPolicyConfig struct {
-	Spec   FixedPolicySpec `json:"spec"`
-	Roster FixedRoster     `json:"roster"`
+	Spec                 FixedPolicySpec `json:"spec"`
+	Roster               FixedRoster     `json:"roster"`
+	ImportLegacyStateSHA string          `json:"import_legacy_state_sha256,omitempty"`
 }
 
 func (f FixedPolicyConfig) validate(c Config) error {
 	if err := f.Spec.Validate(); err != nil {
 		return err
+	}
+	if f.ImportLegacyStateSHA != "" && !fixedSHA(f.ImportLegacyStateSHA) {
+		return errors.New("invalid fixed legacy-state binding")
 	}
 	if _, err := fixedOrder(nil, f.Roster.Symbols); err != nil {
 		return err
@@ -132,12 +136,13 @@ type FixedBatch struct {
 }
 
 type FixedPolicyState struct {
-	Version   int               `json:"version"`
-	Spec      FixedPolicySpec   `json:"spec"`
-	PolicySHA string            `json:"policy_sha256"`
-	BoundAt   time.Time         `json:"bound_at"`
-	Batch     *FixedBatch       `json:"batch,omitzero"`
-	Contracts map[string]Option `json:"open_contracts,omitempty"`
+	Version   int                `json:"version"`
+	Spec      FixedPolicySpec    `json:"spec"`
+	PolicySHA string             `json:"policy_sha256"`
+	BoundAt   time.Time          `json:"bound_at"`
+	Batch     *FixedBatch        `json:"batch,omitzero"`
+	Contracts map[string]Option  `json:"open_contracts,omitempty"`
+	Legacy    *FixedLegacyImport `json:"legacy_import,omitzero"`
 }
 
 // FixedSignalEvidence is input to signal selection, not an order capability.
@@ -211,11 +216,15 @@ func (f FixedPolicyState) validate(s State) error {
 		f.BoundAt.IsZero() || f.Spec.FeeKnownAt.After(f.BoundAt) {
 		return errors.New("fixed policy journal binding is invalid")
 	}
+	if err := f.validateLegacy(); err != nil {
+		return err
+	}
 	for symbol, p := range s.Positions {
 		_, entry, latest, known := FixedEntryTimes(p.PutOpenedAt)
+		inherited := f.inherited(symbol, p)
 		if !fixedSymbol(symbol) || p.PutID == "" && p.OwnedShares != 100 || p.CallID != "" && p.OwnedShares != 100 ||
-			p.PutOpenedAt.IsZero() || p.PutOpenedAt.Before(f.BoundAt) || !strings.HasPrefix(p.Provenance, "autowheel put fill ") ||
-			!known || p.PutOpenedAt.Before(entry) || p.PutOpenedAt.After(latest) ||
+			p.PutOpenedAt.IsZero() || !strings.HasPrefix(p.Provenance, "autowheel put fill ") ||
+			!inherited && (p.PutOpenedAt.Before(f.BoundAt) || !known || p.PutOpenedAt.Before(entry) || p.PutOpenedAt.After(latest)) ||
 			p.OwnedShares == 100 && (p.InventoryAt.IsZero() || p.InventoryAt.Before(p.PutOpenedAt)) {
 			return errors.New("fixed policy contains unsupported inventory")
 		}
@@ -236,8 +245,13 @@ func (f FixedPolicyState) validate(s State) error {
 		}
 	}
 	if f.Batch == nil {
-		if len(s.Intents) != 0 || len(s.Positions) != 0 {
+		if len(s.Intents) != 0 {
 			return errors.New("fixed inventory or submission intent has no signal batch")
+		}
+		for symbol, p := range s.Positions {
+			if !f.inherited(symbol, p) {
+				return errors.New("fixed inventory has no signal batch or exact legacy import")
+			}
 		}
 		return nil
 	}

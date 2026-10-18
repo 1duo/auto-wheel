@@ -26,7 +26,8 @@ type FixedBroker interface {
 }
 
 // BindNative checks the inherited exclusive-order ledger before changing the
-// journal's policy. A flat account with unexplained activity is not a handover.
+// journal's policy. Existing own lifecycles require an exact reviewed journal
+// digest; a flat account with unexplained activity is not a handover either.
 func (c *FixedController) BindNative(config Config, s Snapshot, now time.Time) error {
 	if err := config.Validate(); err != nil {
 		return err
@@ -37,7 +38,20 @@ func (c *FixedController) BindNative(config Config, s Snapshot, now time.Time) e
 	if err := checkOrderScope(config, *c.state, s); err != nil {
 		return err
 	}
+	if c.state.Fixed == nil && config.FixedPolicy.ImportLegacyStateSHA != "" {
+		return c.importLegacy(config, s, now)
+	}
+	if c.state.Fixed != nil && config.FixedPolicy.ImportLegacyStateSHA != fixedLegacyBinding(c.state.Fixed) {
+		return errors.New("configured legacy import differs from the durable policy handover")
+	}
 	return c.Bind(s, now)
+}
+
+func fixedLegacyBinding(f *FixedPolicyState) string {
+	if f != nil && f.Legacy != nil {
+		return f.Legacy.StateSHA
+	}
+	return ""
 }
 
 func (c *FixedController) nativeConfig(config Config) error {
@@ -54,7 +68,8 @@ func (c *FixedController) nativeConfig(config Config) error {
 		config.MaxQuoteAgeSeconds != c.spec.MaxQuoteAge {
 		return errors.New("fixed native account, roster, cash limits or fee binding differs")
 	}
-	if config.FixedPolicy == nil || config.FixedPolicy.Spec.Digest() != c.spec.Digest() {
+	if config.FixedPolicy == nil || config.FixedPolicy.Spec.Digest() != c.spec.Digest() ||
+		config.FixedPolicy.ImportLegacyStateSHA != fixedLegacyBinding(c.state.Fixed) {
 		return errors.New("fixed native configuration has no matching explicit policy")
 	}
 	return nil
@@ -126,14 +141,18 @@ func (c *FixedController) ReconcileNative(config Config, s Snapshot, now time.Ti
 	return c.saveState(next)
 }
 
-func (c *FixedController) executionCandidate(signal FixedSignal, e FixedExecutionEvidence, now time.Time) (Candidate, error) {
+func (c *FixedController) executionCandidate(signal FixedSignal, e FixedExecutionEvidence, now time.Time, requireFresh bool) (Candidate, error) {
 	q := e.Market
 	if signal.Contract == nil || q.Contract != *signal.Contract || e.ChainID == "" || !e.Deliverable100 ||
 		!contractpolicy.EntryBookUsable(q.Stock) || !contractpolicy.EntryBookUsable(q.Option) ||
 		q.Tick < 1 || q.Option.Bid%int64(q.Tick) != 0 || q.BidSize < 1 ||
-		q.Option.Bid*100 <= int64(c.spec.OptionFeeBudget) ||
-		!fresh(q.BidAt, now, c.spec.MaxQuoteAge) || !fresh(q.AskAt, now, c.spec.MaxQuoteAge) || !fresh(q.OptionAt, now, c.spec.MaxQuoteAge) {
+		q.Option.Bid*100 <= int64(c.spec.OptionFeeBudget) {
 		return Candidate{}, errors.New("fixed execution identity, books, clocks or deliverable is unproven")
+	}
+	for _, at := range []time.Time{q.BidAt, q.AskAt, q.OptionAt} {
+		if at.IsZero() || at.After(now.Add(2*time.Second)) || requireFresh && !fresh(at, now, c.spec.MaxQuoteAge) {
+			return Candidate{}, errors.New("fixed source clock is missing, future or stale for execution")
+		}
 	}
 	underlyingAt := q.BidAt
 	if q.AskAt.Before(underlyingAt) {
@@ -163,14 +182,14 @@ func (c *FixedController) canExecute(config Config, signal FixedSignal, e FixedE
 		len(c.state.Intents) != 0 || !fresh(s.At, now, c.spec.MaxQuoteAge) {
 		return Candidate{}, errors.New("fixed execution has no current single-use claim or fresh account")
 	}
-	return c.openingCandidate(signal, e, s, now)
+	return c.openingCandidate(signal, e, s, now, true)
 }
 
-func (c *FixedController) openingCandidate(signal FixedSignal, e FixedExecutionEvidence, s Snapshot, now time.Time) (Candidate, error) {
+func (c *FixedController) openingCandidate(signal FixedSignal, e FixedExecutionEvidence, s Snapshot, now time.Time, requireFresh bool) (Candidate, error) {
 	if len(c.state.Intents) != 0 || s.Account != c.spec.Account || !fresh(s.At, now, c.spec.MaxQuoteAge) {
 		return Candidate{}, errors.New("fixed opening lacks a reconciled fresh account")
 	}
-	a, err := c.executionCandidate(signal, e, now)
+	a, err := c.executionCandidate(signal, e, now, requireFresh)
 	if err != nil {
 		return Candidate{}, err
 	}
@@ -225,6 +244,8 @@ func (c *FixedController) openingCandidate(signal FixedSignal, e FixedExecutionE
 // PreviewNative is non-trading integration evidence. It neither captures nor
 // claims a weekly signal; ExecuteNative accepts only a symbol and consumes its
 // independent durable signal, so this preview cannot be submitted as a draft.
+// Known, nonfuture older books may establish compatibility outside market hours;
+// account facts remain fresh, and execution always requires fresh market books.
 func (c *FixedController) PreviewNative(config Config, e FixedExecutionEvidence, s Snapshot, now time.Time) (Candidate, error) {
 	if err := c.ReconcileNative(config, s, now); err != nil {
 		return Candidate{}, err
@@ -238,7 +259,7 @@ func (c *FixedController) PreviewNative(config Config, e FixedExecutionEvidence,
 			return Candidate{}, err
 		}
 	}
-	return c.openingCandidate(signal, e, s, now)
+	return c.openingCandidate(signal, e, s, now, false)
 }
 
 // ExecuteNative consumes the signal BEFORE reads or reviews. Any rejection
