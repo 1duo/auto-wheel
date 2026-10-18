@@ -1,0 +1,246 @@
+{
+  "schema": "AutoWheelProductionCandidateManifestV1",
+  "metadata_only_not_a_native_configuration": true,
+  "native_activation_authorization": false,
+  "review_clock": "2026-10-18",
+  "production_baseline_release": "priority-ebcd7520b452",
+  "baseline_source_archive_sha256": "30545bcc929cd25c3b647c71374614fde72ef7120af9993d12f0e9419a9bca46",
+  "selector_parity_summary_sha256": "b18886e3430ff86487476d5234faea5d821d401133d6d7c0cfbf29375d106cf9",
+  "selector_comparisons": 21270,
+  "selector_mismatches": 0,
+  "historical_results_relabelled": false,
+  "risk_preference_changed_or_extra_risk_approved": false,
+  "all_launch_gates_must_be_checked": true,
+  "fixed_2026_opening_cohort": [
+    "AMD",
+    "ORCL",
+    "INTC",
+    "CRM",
+    "BAC",
+    "XOM",
+    "WMT",
+    "BA",
+    "JNJ",
+    "CVX"
+  ],
+  "candidates": [
+    {
+      "candidate_id": "conservative-rd1-floor-hold-v1",
+      "status": "historical_candidate_engineering_in_progress",
+      "existing_native_preset": false,
+      "live_enabled": false,
+      "full_history": {
+        "family": "floor_full",
+        "profile": "conservative-hold",
+        "sessions": 1449,
+        "profit_cents": 2707580,
+        "net_return": {
+          "denominator": 8404717,
+          "numerator": 2707580
+        },
+        "maximum_sampled_DD": {
+          "denominator": 10515867,
+          "numerator": 1458020
+        },
+        "net_losing_completed_stock_cycles": 0,
+        "completed_stock_cycles": 11,
+        "censored_stock_cycles": 1,
+        "censored_stock_net_PnL_cents": -675165,
+        "call_coverage": {
+          "covered_share_sessions": 60600,
+          "owned_share_sessions": 187700,
+          "ratio": {
+            "denominator": 1877,
+            "numerator": 606
+          },
+          "reason": null
+        }
+      },
+      "fresh_forward": {
+        "family": "conservative_floor",
+        "profile": "conservative-floor-hold",
+        "sessions": 752,
+        "profit_cents": 1570405,
+        "net_return": {
+          "denominator": 8404717,
+          "numerator": 1570405
+        },
+        "maximum_sampled_DD": {
+          "denominator": 4452491,
+          "numerator": 479430
+        },
+        "net_losing_completed_stock_cycles": 0,
+        "completed_stock_cycles": 4,
+        "censored_stock_cycles": 1,
+        "censored_stock_net_PnL_cents": -2730,
+        "call_coverage": {
+          "covered_share_sessions": 20600,
+          "owned_share_sessions": 48500,
+          "ratio": {
+            "denominator": 485,
+            "numerator": 206
+          },
+          "reason": null
+        }
+      },
+      "historical_rejections_preserved": [
+        "sampled_DD_allowance"
+      ],
+      "engineering_status": "selector_and_read_only_market_adapter_verified_order_integration_pending",
+      "production_writing_phase": "P1_conservative_only"
+    },
+    {
+      "candidate_id": "balanced-rd1-floor-tp75-v1",
+      "status": "historical_candidate_engineering_in_progress",
+      "existing_native_preset": false,
+      "live_enabled": false,
+      "full_history": {
+        "family": "floor_full",
+        "profile": "balanced-tp75",
+        "sessions": 1449,
+        "profit_cents": 4251465,
+        "net_return": {
+          "denominator": 8404717,
+          "numerator": 4251465
+        },
+        "maximum_sampled_DD": {
+          "denominator": 11067037,
+          "numerator": 1641965
+        },
+        "net_losing_completed_stock_cycles": 0,
+        "completed_stock_cycles": 16,
+        "censored_stock_cycles": 2,
+        "censored_stock_net_PnL_cents": -483830,
+        "call_coverage": {
+          "covered_share_sessions": 96000,
+          "owned_share_sessions": 283500,
+          "ratio": {
+            "denominator": 189,
+            "numerator": 64
+          },
+          "reason": null
+        }
+      },
+      "fresh_forward": {
+        "family": "frontier",
+        "profile": "balanced-floor-tp75",
+        "sessions": 752,
+        "profit_cents": 2271640,
+        "net_return": {
+          "denominator": 8404717,
+          "numerator": 2271640
+        },
+        "maximum_sampled_DD": {
+          "denominator": 9491497,
+          "numerator": 1613315
+        },
+        "net_losing_completed_stock_cycles": 0,
+        "completed_stock_cycles": 8,
+        "censored_stock_cycles": 1,
+        "censored_stock_net_PnL_cents": 199130,
+        "call_coverage": {
+          "covered_share_sessions": 39800,
+          "owned_share_sessions": 116400,
+          "ratio": {
+            "denominator": 582,
+            "numerator": 199
+          },
+          "reason": null
+        }
+      },
+      "historical_rejections_preserved": [
+        "sampled_DD_allowance",
+        "TP_not_better_than_hold_on_profit_and_lower_quartile"
+      ],
+      "engineering_status": "selector_and_read_only_market_adapter_verified_order_integration_pending",
+      "production_writing_phase": "later_stage_not_authorized_by_P1"
+    },
+    {
+      "candidate_id": "aggressive-rd1-stock-tp75-v1",
+      "status": "historical_candidate_engineering_in_progress",
+      "existing_native_preset": false,
+      "live_enabled": false,
+      "full_history": {
+        "family": "original_full",
+        "profile": "aggressive-tp75",
+        "sessions": 1449,
+        "profit_cents": 5964020,
+        "net_return": {
+          "denominator": 8404717,
+          "numerator": 5964020
+        },
+        "maximum_sampled_DD": {
+          "denominator": 9734267,
+          "numerator": 1257280
+        },
+        "net_losing_completed_stock_cycles": 18,
+        "completed_stock_cycles": 64,
+        "censored_stock_cycles": 3,
+        "censored_stock_net_PnL_cents": -83010,
+        "call_coverage": {
+          "covered_share_sessions": 336200,
+          "owned_share_sessions": 434200,
+          "ratio": {
+            "denominator": 2171,
+            "numerator": 1681
+          },
+          "reason": null
+        }
+      },
+      "fresh_forward": {
+        "family": "frontier",
+        "profile": "aggressive-original-tp75",
+        "sessions": 752,
+        "profit_cents": 4051255,
+        "net_return": {
+          "denominator": 8404717,
+          "numerator": 4051255
+        },
+        "maximum_sampled_DD": {
+          "denominator": 1510006,
+          "numerator": 150835
+        },
+        "net_losing_completed_stock_cycles": 9,
+        "completed_stock_cycles": 31,
+        "censored_stock_cycles": 3,
+        "censored_stock_net_PnL_cents": 351720,
+        "call_coverage": {
+          "covered_share_sessions": 176300,
+          "owned_share_sessions": 225600,
+          "ratio": {
+            "denominator": 2256,
+            "numerator": 1763
+          },
+          "reason": null
+        }
+      },
+      "historical_rejections_preserved": [
+        "TP_not_better_than_hold_on_profit_and_lower_quartile"
+      ],
+      "engineering_status": "selector_and_read_only_market_adapter_verified_order_integration_pending",
+      "production_writing_phase": "later_stage_not_authorized_by_P1"
+    }
+  ],
+  "open_integration_gates": [
+    "native_pre_submit_selector_and_account_deliverable_review",
+    "cash_fee_basis_and_call_floor",
+    "opening_reentry_cadence",
+    "existing_owned_lifecycle_compatibility_or_flat_transition",
+    "same_pre_submit_selector",
+    "bound_capital_and_reserve_policy",
+    "targeted_recovery_and_activation_checks",
+    "paused_release_build_and_authenticated_native_readiness"
+  ],
+  "no_automatic_order_or_deployment": true,
+  "broker_market_observation_summary_sha256": "dd818ca89c3b91712b4889fc7cd6d872eee23c76dd718855a98f963dcf1e01ef",
+  "broker_source_status": {
+    "real_paginated_menu_verified": true,
+    "market_calls": 8,
+    "instruments": 486,
+    "symbol": "AMD",
+    "source_fresh_for_trading": false,
+    "account_deliverable_reviewed": false,
+    "financial_calls": 0,
+    "native_order_integration_complete": false
+  }
+}
