@@ -206,6 +206,9 @@ func (c *FixedController) Record(symbol string, evidence FixedSignalEvidence, no
 	entry.Tick, entry.BidSize = evidence.Tick, evidence.BidSize
 	entry.MenuSHA = fixedDigest(evidence.Menu)
 	if entry.Kind == "call" {
+		if !fixedPhysicalFeeCovered(c.spec, chosen.Strike) {
+			return c.reject(c.copy(), i, "fee_budget", now)
+		}
 		entry.AcquisitionCeiling, entry.BasisSHA, err = fixedPositionBasis(c.spec, f.PolicySHA, c.state.Positions[symbol])
 		if err != nil {
 			return c.reject(c.copy(), i, "basis_unavailable", now)

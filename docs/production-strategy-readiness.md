@@ -1,5 +1,42 @@
 # Research candidates to production
 
+## Tax evaluation and the authorized capital change, October 18
+
+The [current evaluation summary](strategy-tax-capital-evaluation-20261018.json)
+records matched old/new-cap paths for all three modes, with the same shared
+[tax model](strategy-evaluation.md), held rosters and account seeds. The user
+confirmed $200,000 total committed capital and removal of the independent
+$26,666.66 symbol allocation. An explicit symbol guard equal to the account
+ceiling preserves bounded schema compatibility without a separate allocation.
+This change does not increase cash, permit margin, change the cash reserve,
+or add slots/contracts.
+
+Conservative's new-cap after-tax return/DD improves in both histories under
+both tax rates, with carryforward and denied-loss-benefit scenarios, and under
+each fixed fee/execution/assignment sensitivity. Its fresh-account absolute
+return is lower. Concentration rises, and five-minute execution materially
+changes full-history returns and open losses. Balanced's new full-history
+after-tax drawdown rises to 25.41%; aggressive remains a separate growth/CC
+research profile with higher realized loss frequency and missing native stock
+purchase/managed-exit qualification. Keep conservative as the production mode
+for this capital-only release. No historical research screen is relabeled.
+
+Tax-funded replays reserve a modeled liability. Production retains its explicit
+configured reserve and does not become a personal tax accounting or payment
+service; replay wealth is not a promise of identical live fills/tax cash flows.
+Historical contract/action and broker execution admission remains conditional.
+
+The current two owned inherited lifecycles can use the new `rebind-capital`
+command before the first native weekly cohort. It requires a durable pause,
+revoked activation and the journal lock, archives the exact original source,
+then changes the capital ceilings and the reviewed physical-delivery fee allowance.
+It preserves ownership, contracts, completed receipts, option fees and import
+provenance. The archive preserves the original clock; the new financial binding
+records the actual transition time and current fee evidence. It refuses pending
+signals/submissions or a strategy/reserve/option-fee change.
+Fresh native readiness and release/config-bound activation remain mandatory.
+The previous source below documents earlier rollout stages and risk findings.
+
 ## Authorized existing-inventory transition, October 18
 
 The user authorized rollout while managing the existing normal one-lot AutoWheel

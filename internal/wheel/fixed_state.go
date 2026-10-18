@@ -344,7 +344,7 @@ func (f FixedPolicyState) validate(s State) error {
 }
 
 func fixedAbstention(s string) bool {
-	return slices.Contains([]string{"source_unavailable", "no_target", "invalid_book", "basis_unavailable", "cost_floor", "lifecycle_busy", "capture_interrupted"}, s)
+	return slices.Contains([]string{"source_unavailable", "no_target", "invalid_book", "basis_unavailable", "cost_floor", "fee_budget", "lifecycle_busy", "capture_interrupted"}, s)
 }
 
 // This is an operational CEILING from a reconciled own put assignment and its

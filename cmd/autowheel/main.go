@@ -63,7 +63,7 @@ func main() {
 
 func run() error {
 	if len(os.Args) < 2 {
-		return errors.New("usage: autowheel version|init|login|check-config|check-transition|doctor|audit-account|run|once|adopt|recover")
+		return errors.New("usage: autowheel version|init|login|check-config|check-transition|rebind-capital|doctor|audit-account|run|once|adopt|recover")
 	}
 	cmd := os.Args[1]
 	if cmd == "version" {
@@ -151,6 +151,12 @@ func run() error {
 			"scope":               "journal_only; fresh broker agreement required before import",
 			"legacy_state_sha256": digest, "owned_symbols": slices.Sorted(maps.Keys(st.Positions)),
 			"broker_verified": false, "trading_authorized": false})
+	}
+	if cmd == "rebind-capital" {
+		if *live || *liveCapable || *exclusive {
+			return errors.New("capital transition cannot enable trading")
+		}
+		return rebindCapital(c, *stateDir, os.Stdout)
 	}
 	if cmd == "audit-account" {
 		if *live || *liveCapable || *exclusive {

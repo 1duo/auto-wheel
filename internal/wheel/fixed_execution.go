@@ -143,6 +143,9 @@ func (c *FixedController) ReconcileNative(config Config, s Snapshot, now time.Ti
 
 func (c *FixedController) executionCandidate(signal FixedSignal, e FixedExecutionEvidence, now time.Time, requireFresh bool) (Candidate, error) {
 	q := e.Market
+	if q.Contract.Kind == "call" && !fixedPhysicalFeeCovered(c.spec, q.Contract.Strike) {
+		return Candidate{}, errors.New("fixed call delivery exceeds the reviewed physical fee allowance")
+	}
 	if signal.Contract == nil || q.Contract != *signal.Contract || e.ChainID == "" || !e.Deliverable100 ||
 		!contractpolicy.EntryBookUsable(q.Stock) || !contractpolicy.EntryBookUsable(q.Option) ||
 		q.Tick < 1 || q.Option.Bid%int64(q.Tick) != 0 || q.BidSize < 1 ||
