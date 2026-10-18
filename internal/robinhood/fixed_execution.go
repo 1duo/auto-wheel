@@ -34,11 +34,11 @@ func (b *Broker) RefreshForFixed(ctx context.Context, chosen contractpolicy.Cont
 // SubmitFixed shares the native transport and activation mutex, adding the
 // weekly deadline check inside that mutex immediately before broker transport.
 // This method does not provision an activation, lock or retired-peer seal.
-func (b *Broker) SubmitFixed(ctx context.Context, a wheel.Candidate, ref string, deadline time.Time) (string, error) {
+func (b *Broker) SubmitFixed(ctx context.Context, a wheel.Candidate, ref string, deadline time.Time, guard func() error) (string, error) {
 	if b.BeforeSubmit == nil || b.SubmitMu == nil || b.SubmitProvider != nil ||
-		b.Config.FixedPolicy == nil || b.Config.OrderCoveragePolicy != "exclusive_standard" || b.Config.CoordinatorSocket != "" || deadline.IsZero() {
+		b.Config.FixedPolicy == nil || b.Config.OrderCoveragePolicy != "exclusive_standard" || b.Config.CoordinatorSocket != "" || deadline.IsZero() || guard == nil {
 		return "", wheel.ErrNotSubmitted
 	}
-	id, _, err := b.submitEvidence(ctx, a, ref, deadline)
+	id, _, err := b.submitEvidence(ctx, a, ref, deadline, guard)
 	return id, err
 }

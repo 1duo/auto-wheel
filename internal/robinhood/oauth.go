@@ -114,6 +114,7 @@ func exchange(ctx context.Context, h *http.Client, values url.Values, c Credenti
 	if err != nil {
 		return c, err
 	}
+	req.GetBody = nil // A refresh grant must never be rewound by HTTP transport.
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	resp, err := h.Do(req)
 	if err != nil {

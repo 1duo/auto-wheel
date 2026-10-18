@@ -83,7 +83,7 @@ func TestFixedNativeTransportRequiresNativeControls(t *testing.T) {
 			case "no_deadline":
 				deadline = time.Time{}
 			}
-			if _, err := b.SubmitFixed(t.Context(), wheel.Candidate{}, "ref", deadline); !errors.Is(err, wheel.ErrNotSubmitted) || len(client.calls) != 0 {
+			if _, err := b.SubmitFixed(t.Context(), wheel.Candidate{}, "ref", deadline, func() error { return nil }); !errors.Is(err, wheel.ErrNotSubmitted) || len(client.calls) != 0 {
 				t.Fatal("fixed adapter bypassed native controls", err, client.calls)
 			}
 		})

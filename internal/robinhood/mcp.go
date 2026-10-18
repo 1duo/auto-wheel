@@ -15,6 +15,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"autowheel/internal/wheel"
 )
 
 const Endpoint = "https://agent.robinhood.com/mcp/trading"
@@ -29,6 +31,7 @@ type Tool struct {
 	OutputSchema object `json:"outputSchema,omitempty"`
 }
 type Client struct {
+	gate     sync.RWMutex // Parallel get_* calls; connection changes and other calls are exclusive.
 	mu       sync.Mutex
 	http     *http.Client
 	tokens   *Tokens
@@ -43,7 +46,14 @@ type Client struct {
 }
 
 func secureHTTP() *http.Client {
-	return &http.Client{Timeout: 25 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	protocols := new(http.Protocols)
+	protocols.SetHTTP1(true)
+	// A fresh HTTP/1 connection for each request avoids the standard
+	// transport's cached-connection/HTTP2 retries of state-changing POSTs.
+	// All reads still use the bounded parallel callers above.
+	transport := &http.Transport{Proxy: http.ProxyFromEnvironment, Protocols: protocols,
+		DisableKeepAlives: true, TLSHandshakeTimeout: 10 * time.Second}
+	return &http.Client{Transport: transport, Timeout: 25 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 }
 func NewClient(tokenFile string, live bool) *Client {
 	return &Client{http: secureHTTP(), tokens: &Tokens{Path: tokenFile}, endpoint: Endpoint, live: live}
@@ -59,11 +69,13 @@ func NewCoordinatorClient(tokenFile string, live bool) *Client {
 }
 
 func (c *Client) Connect(ctx context.Context) error {
+	c.gate.Lock()
+	defer c.gate.Unlock()
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	c.session = ""
 	c.tools = nil
-	v, err := c.rpc(ctx, "initialize", object{"protocolVersion": protocol, "capabilities": object{}, "clientInfo": object{"name": "AutoWheel", "version": "0.1.0"}}, false)
+	c.mu.Unlock()
+	v, err := c.rpc(ctx, "initialize", object{"protocolVersion": protocol, "capabilities": object{}, "clientInfo": object{"name": "AutoWheel", "version": "0.1.0"}}, false, nil)
 	if err != nil {
 		return err
 	}
@@ -71,17 +83,17 @@ func (c *Client) Connect(ctx context.Context) error {
 	if !ok || o["protocolVersion"] != protocol {
 		return errors.New("MCP protocol negotiation failed")
 	}
-	if _, err = c.rpc(ctx, "notifications/initialized", nil, true); err != nil {
+	if _, err = c.rpc(ctx, "notifications/initialized", nil, true, nil); err != nil {
 		return err
 	}
-	c.tools = map[string]Tool{}
+	tools := map[string]Tool{}
 	cursor := ""
 	for range 32 {
 		params := object{}
 		if cursor != "" {
 			params["cursor"] = cursor
 		}
-		v, err = c.rpc(ctx, "tools/list", params, false)
+		v, err = c.rpc(ctx, "tools/list", params, false, nil)
 		if err != nil {
 			return err
 		}
@@ -95,13 +107,16 @@ func (c *Client) Connect(ctx context.Context) error {
 			return errors.New("empty or invalid MCP tools inventory")
 		}
 		for _, t := range batch {
-			if _, ok := c.tools[t.Name]; ok {
+			if _, ok := tools[t.Name]; ok {
 				return errors.New("duplicate MCP tool")
 			}
-			c.tools[t.Name] = t
+			tools[t.Name] = t
 		}
 		cursor, _ = o["nextCursor"].(string)
 		if cursor == "" {
+			c.mu.Lock()
+			c.tools = tools
+			c.mu.Unlock()
 			return nil
 		}
 	}
@@ -127,36 +142,66 @@ func (c *Client) Supports(name, key string) bool {
 }
 
 func (c *Client) Call(ctx context.Context, name string, args object) (any, error) {
+	return c.call(ctx, name, args, nil)
+}
+
+// CallGuarded runs a local, non-RPC guard after authentication and immediately
+// before HTTP transport. A rejected guard proves the order was never sent.
+func (c *Client) CallGuarded(ctx context.Context, name string, args object, guard func() error) (any, error) {
+	if guard == nil {
+		return nil, fmt.Errorf("%w: transport guard missing", wheel.ErrNotSubmitted)
+	}
+	return c.call(ctx, name, args, guard)
+}
+
+func (c *Client) validateCall(name string, args object) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	stockReview := c.coordinator && name == "review_equity_order"
 	stockWrite := c.coordinator && (name == "place_equity_order" || name == "cancel_equity_order")
 	if !strings.HasPrefix(name, "get_") && name != "review_option_order" && !stockReview && !(c.live && (name == "place_option_order" || stockWrite)) {
-		return nil, errors.New("MCP tool blocked by read-only boundary")
+		return errors.New("MCP tool blocked by read-only boundary")
 	}
 	t, ok := c.tools[name]
 	if !ok {
-		return nil, fmt.Errorf("MCP lacks required tool %s", name)
+		return fmt.Errorf("MCP lacks required tool %s", name)
 	}
 	props, _ := t.InputSchema["properties"].(object)
 	for k, v := range args {
 		s, ok := props[k].(object)
 		if !ok {
-			return nil, fmt.Errorf("%s input schema lacks %s", name, k)
+			return fmt.Errorf("%s input schema lacks %s", name, k)
 		}
 		if err := validateValue(s, v); err != nil {
-			return nil, fmt.Errorf("%s.%s: %w", name, k, err)
+			return fmt.Errorf("%s.%s: %w", name, k, err)
 		}
 	}
 	if required, ok := t.InputSchema["required"].([]any); ok {
 		for _, r := range required {
 			k, _ := r.(string)
 			if _, ok := args[k]; !ok {
-				return nil, fmt.Errorf("%s requires %s", name, k)
+				return fmt.Errorf("%s requires %s", name, k)
 			}
 		}
 	}
-	v, err := c.rpc(ctx, "tools/call", object{"name": name, "arguments": args}, false)
+	return nil
+}
+
+func (c *Client) call(ctx context.Context, name string, args object, guard func() error) (any, error) {
+	if strings.HasPrefix(name, "get_") {
+		c.gate.RLock()
+		defer c.gate.RUnlock()
+	} else {
+		c.gate.Lock()
+		defer c.gate.Unlock()
+	}
+	if err := c.validateCall(name, args); err != nil {
+		if guard != nil {
+			return nil, errors.Join(wheel.ErrNotSubmitted, err)
+		}
+		return nil, err
+	}
+	v, err := c.rpc(ctx, "tools/call", object{"name": name, "arguments": args}, false, guard)
 	if err != nil {
 		return nil, err
 	}
@@ -277,33 +322,59 @@ func validateValue(schema object, v any) error {
 	return nil
 }
 
-func (c *Client) rpc(ctx context.Context, method string, params any, notification bool) (any, error) {
+func (c *Client) rpc(ctx context.Context, method string, params any, notification bool, guard func() error) (any, error) {
+	// Only guarded calls expose this proof. Authentication may have made an
+	// OAuth request, but no financial request has reached http.Do yet.
+	unsent := func(err error) (any, error) {
+		if guard != nil {
+			return nil, fmt.Errorf("%w: %v", wheel.ErrNotSubmitted, err)
+		}
+		return nil, err
+	}
+	c.mu.Lock()
 	c.id++
+	id, session := c.id, c.session
+	c.mu.Unlock()
 	body := object{"jsonrpc": "2.0", "method": method}
 	if params != nil {
 		body["params"] = params
 	}
 	if !notification {
-		body["id"] = c.id
+		body["id"] = id
 	}
 	b, err := json.Marshal(body)
 	if err != nil {
-		return nil, err
+		return unsent(err)
 	}
 	token, err := c.tokens.Access(ctx, c.http)
 	if err != nil {
-		return nil, err
+		return unsent(err)
 	}
 	req, err := http.NewRequestWithContext(ctx, "POST", c.endpoint, bytes.NewReader(b))
 	if err != nil {
-		return nil, err
+		return unsent(err)
+	}
+	if method == "tools/call" {
+		if call, ok := params.(object); ok {
+			if name, ok := call["name"].(string); ok && !strings.HasPrefix(name, "get_") {
+				req.GetBody = nil // No body rewind for an order or review request.
+			}
+		}
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("MCP-Protocol-Version", protocol)
-	if c.session != "" {
-		req.Header.Set("Mcp-Session-Id", c.session)
+	if session != "" {
+		req.Header.Set("Mcp-Session-Id", session)
+	}
+	if err := ctx.Err(); err != nil {
+		return unsent(err)
+	}
+	if guard != nil {
+		if err := guard(); err != nil {
+			return nil, fmt.Errorf("%w: %v", wheel.ErrNotSubmitted, err)
+		}
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -314,7 +385,9 @@ func (c *Client) rpc(ctx context.Context, method string, params any, notificatio
 		return nil, fmt.Errorf("MCP HTTP %d (no automatic replay)", resp.StatusCode)
 	}
 	if method == "initialize" {
+		c.mu.Lock()
 		c.session = resp.Header.Get("Mcp-Session-Id")
+		c.mu.Unlock()
 	}
 	if notification {
 		_, err = io.Copy(io.Discard, io.LimitReader(resp.Body, maxResponse))
@@ -342,7 +415,7 @@ func (c *Client) rpc(ctx context.Context, method string, params any, notificatio
 				if e != nil {
 					return nil, e
 				}
-				if o, ok := v.(object); ok && o["id"] == json.Number(fmt.Sprint(c.id)) {
+				if o, ok := v.(object); ok && o["id"] == json.Number(fmt.Sprint(id)) {
 					envelope = o
 					break
 				}
@@ -367,7 +440,7 @@ func (c *Client) rpc(ctx context.Context, method string, params any, notificatio
 	} else {
 		return nil, errors.New("unsupported MCP response content type")
 	}
-	if envelope == nil || envelope["jsonrpc"] != "2.0" || envelope["id"] != json.Number(fmt.Sprint(c.id)) {
+	if envelope == nil || envelope["jsonrpc"] != "2.0" || envelope["id"] != json.Number(fmt.Sprint(id)) {
 		return nil, errors.New("MCP response identity mismatch")
 	}
 	if envelope["error"] != nil {

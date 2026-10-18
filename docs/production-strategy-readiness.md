@@ -251,6 +251,26 @@ checks the weekly deadline immediately before transport. Unknown outcomes retain
 the intent; only a proved pre-transport rejection can clear an unsent intent.
 An uncertain journal save fences the controller and requires restart from disk.
 
+The final transport review found and corrected two concrete gaps: the old MCP
+mutex serialized the nominally parallel readers, and authentication could outlive
+the earlier freshness/deadline check. Read RPCs now reserve independent request
+IDs and run concurrently; connection changes, reviews and writes stay exclusive.
+The guard runs again after authentication, checking both stock-side clocks,
+option clock, account-snapshot age, the durable intent and the weekly deadline.
+The HTTP context is also bounded by the earliest source expiry/deadline, covering
+connection setup. Only errors proved to precede financial HTTP transport may be
+classified unsent; financial transport errors remain unknown with no replay.
+
+The client uses fresh HTTP/1 connections and disables body rewind on stateful
+requests and OAuth refresh. This avoids hidden cached-connection/HTTP2 retries
+inside the standard HTTP transport. The same transport is used for non-trading
+readiness reads/reviews. Three source callers can still run concurrently.
+Local HTTP fixtures prove overlapping reads, independent SSE identities, fresh
+connections, authentication-time expiry and no post-send retry. These are
+client-level proofs, not observations of current broker throughput. The negotiated
+[MCP HTTP specification](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports)
+permits multiple client connections; actual provider qualification remains open.
+
 Exact metadata for each owned open option survives restart, including a covered
 call's strike and chain. Reconciliation retains the existing disclosed own-put
 assignment inference and at-least-24-hour reporting delay. Put and stock reporting

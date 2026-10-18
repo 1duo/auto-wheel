@@ -22,7 +22,7 @@ type FixedBroker interface {
 	Snapshot(context.Context) (Snapshot, error)
 	RefreshForFixed(context.Context, contractpolicy.Contract, func() time.Time) (FixedExecutionEvidence, error)
 	Review(context.Context, Candidate) error
-	SubmitFixed(context.Context, Candidate, string, time.Time) (string, error)
+	SubmitFixed(context.Context, Candidate, string, time.Time, func() error) (string, error)
 }
 
 // BindNative checks the inherited exclusive-order ledger before changing the
@@ -301,11 +301,32 @@ func (c *FixedController) ExecuteNative(ctx context.Context, config Config, b Fi
 		return errors.Join(cause, c.saveState(next))
 	}
 	deadline := c.state.Fixed.Batch.LatestAt
-	if ctx.Err() != nil || clock().After(deadline) || !TradingWindow(clock()) ||
-		!fresh(a.At, clock(), c.spec.MaxQuoteAge) || !fresh(a.UnderlyingAt, clock(), c.spec.MaxQuoteAge) || !fresh(s.At, clock(), c.spec.MaxQuoteAge) {
-		return clearUnsent(ErrNotSubmitted)
+	guard := func() error {
+		at := clock()
+		if err := c.check(); err != nil {
+			return err
+		}
+		if ctx.Err() != nil || at.Before(c.state.Fixed.Batch.ExecutionAt) || at.After(deadline) || !TradingWindow(at) ||
+			c.state.Intents[symbol].Ref != ref || !fresh(a.At, at, c.spec.MaxQuoteAge) ||
+			!fresh(e.Market.BidAt, at, c.spec.MaxQuoteAge) || !fresh(e.Market.AskAt, at, c.spec.MaxQuoteAge) || !fresh(s.At, at, c.spec.MaxQuoteAge) {
+			return ErrNotSubmitted
+		}
+		return nil
 	}
-	id, err := b.SubmitFixed(ctx, a, ref, deadline)
+	if err := guard(); err != nil {
+		return clearUnsent(errors.Join(ErrNotSubmitted, err))
+	}
+	// Also bound connection setup/write time, not just the check before Do.
+	// Once transport is invoked, any timeout remains an unknown order outcome.
+	transportDeadline := deadline
+	for _, at := range []time.Time{a.At, e.Market.BidAt, e.Market.AskAt, s.At} {
+		if expires := at.Add(time.Duration(c.spec.MaxQuoteAge) * time.Second); expires.Before(transportDeadline) {
+			transportDeadline = expires
+		}
+	}
+	transportCtx, cancel := context.WithDeadline(ctx, transportDeadline)
+	defer cancel()
+	id, err := b.SubmitFixed(transportCtx, a, ref, deadline, guard)
 	if err != nil {
 		if errors.Is(err, ErrNotSubmitted) {
 			return clearUnsent(err)

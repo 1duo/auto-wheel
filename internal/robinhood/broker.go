@@ -868,10 +868,10 @@ func (b *Broker) Submit(ctx context.Context, a wheel.Candidate, ref string) (str
 // second read after transport. Its caller persists it before acknowledging the
 // strategy; a lost read cannot erase an already observed order identity.
 func (b *Broker) SubmitEvidence(ctx context.Context, a wheel.Candidate, ref string) (string, any, error) {
-	return b.submitEvidence(ctx, a, ref, time.Time{})
+	return b.submitEvidence(ctx, a, ref, time.Time{}, nil)
 }
 
-func (b *Broker) submitEvidence(ctx context.Context, a wheel.Candidate, ref string, fixedDeadline time.Time) (string, any, error) {
+func (b *Broker) submitEvidence(ctx context.Context, a wheel.Candidate, ref string, fixedDeadline time.Time, fixedGuard func() error) (string, any, error) {
 	if (b.Config.FixedPolicy != nil) != !fixedDeadline.IsZero() {
 		return "", nil, wheel.ErrNotSubmitted
 	}
@@ -899,7 +899,39 @@ func (b *Broker) submitEvidence(ctx context.Context, a wheel.Candidate, ref stri
 	if !fixedDeadline.IsZero() && !fixedDeadlineAllows(fixedDeadline, time.Now()) {
 		return "", nil, wheel.ErrNotSubmitted
 	}
-	v, err := b.MCP.Call(ctx, "place_option_order", args)
+	guard := func() error {
+		if b.BeforeSubmit != nil {
+			if err := b.BeforeSubmit(); err != nil {
+				return err
+			}
+		}
+		if !wheel.TradingWindow(time.Now()) || ctx.Err() != nil || time.Until(a.At) > 2*time.Second || time.Until(a.UnderlyingAt) > 2*time.Second ||
+			time.Since(a.At) > time.Duration(b.Config.MaxQuoteAgeSeconds)*time.Second || time.Since(a.UnderlyingAt) > time.Duration(b.Config.MaxQuoteAgeSeconds)*time.Second ||
+			!fixedDeadline.IsZero() && !fixedDeadlineAllows(fixedDeadline, time.Now()) {
+			return wheel.ErrNotSubmitted
+		}
+		if fixedGuard != nil {
+			return fixedGuard()
+		}
+		return nil
+	}
+	var v any
+	var err error
+	transportDeadline := a.At.Add(time.Duration(b.Config.MaxQuoteAgeSeconds) * time.Second)
+	if expires := a.UnderlyingAt.Add(time.Duration(b.Config.MaxQuoteAgeSeconds) * time.Second); expires.Before(transportDeadline) {
+		transportDeadline = expires
+	}
+	transportCtx, cancel := context.WithDeadline(ctx, transportDeadline)
+	defer cancel()
+	if client, ok := b.MCP.(interface {
+		CallGuarded(context.Context, string, map[string]any, func() error) (any, error)
+	}); ok {
+		v, err = client.CallGuarded(transportCtx, "place_option_order", args, guard)
+	} else if !fixedDeadline.IsZero() {
+		return "", nil, wheel.ErrNotSubmitted // No unguarded fixed-policy transport.
+	} else {
+		v, err = b.MCP.Call(transportCtx, "place_option_order", args)
+	}
 	if err != nil {
 		return "", nil, err
 	}

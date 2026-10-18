@@ -11,19 +11,20 @@ import (
 )
 
 type fixedExecutionBroker struct {
-	t           *testing.T
-	store       *fixedMemoryJournal
-	now         *time.Time
-	snapshot    Snapshot
-	evidence    FixedExecutionEvidence
-	readCount   int
-	reviews     int
-	submits     int
-	beforeRead  func(int)
-	afterReview func()
-	submitErr   error
-	emptyID     bool
-	orderID     string
+	t               *testing.T
+	store           *fixedMemoryJournal
+	now             *time.Time
+	snapshot        Snapshot
+	evidence        FixedExecutionEvidence
+	readCount       int
+	reviews         int
+	submits         int
+	beforeRead      func(int)
+	afterReview     func()
+	submitErr       error
+	emptyID         bool
+	orderID         string
+	beforeTransport func()
 }
 
 func (b *fixedExecutionBroker) Snapshot(context.Context) (Snapshot, error) {
@@ -54,7 +55,16 @@ func (b *fixedExecutionBroker) Review(_ context.Context, a Candidate) error {
 	return nil
 }
 
-func (b *fixedExecutionBroker) SubmitFixed(_ context.Context, a Candidate, ref string, deadline time.Time) (string, error) {
+func (b *fixedExecutionBroker) SubmitFixed(ctx context.Context, a Candidate, ref string, deadline time.Time, guard func() error) (string, error) {
+	if expires, known := ctx.Deadline(); !known || expires.After(deadline) || expires.After(a.At.Add(30*time.Second)) {
+		b.t.Fatal("connection setup is not bounded by source freshness and the weekly deadline")
+	}
+	if b.beforeTransport != nil {
+		b.beforeTransport()
+	}
+	if err := guard(); err != nil {
+		return "", errors.Join(ErrNotSubmitted, err)
+	}
 	b.submits++
 	var durable State
 	if err := json.Unmarshal(b.store.raw, &durable); err != nil {
@@ -133,7 +143,7 @@ func TestFixedNativeExecutionDurabilityAndNoRetry(t *testing.T) {
 }
 
 func TestFixedNativeExecutionFreshAccountAndSourceGates(t *testing.T) {
-	for _, scenario := range []string{"stale_ask", "wrong_contract", "no_deliverable", "zero_bid", "fee_only", "wrong_tick", "cash_after_review", "outside_after_review", "deadline_after_review"} {
+	for _, scenario := range []string{"stale_ask", "wrong_contract", "no_deliverable", "zero_bid", "fee_only", "wrong_tick", "cash_after_review", "outside_after_review", "deadline_after_review", "auth_expires_snapshot", "auth_exceeds_deadline"} {
 		t.Run(scenario, func(t *testing.T) {
 			c, st, _, config, b, now := fixedExecutionFixture(t)
 			switch scenario {
@@ -156,6 +166,10 @@ func TestFixedNativeExecutionFreshAccountAndSourceGates(t *testing.T) {
 				b.afterReview = func() { b.snapshot.ExternalSymbols = []string{"HOOD"} }
 			case "deadline_after_review":
 				b.afterReview = func() { *now = now.Add(5*time.Minute + time.Nanosecond) }
+			case "auth_expires_snapshot":
+				b.beforeTransport = func() { *now = now.Add(31 * time.Second) }
+			case "auth_exceeds_deadline":
+				b.beforeTransport = func() { *now = now.Add(5*time.Minute + time.Nanosecond) }
 			}
 			if err := c.ExecuteNative(t.Context(), config, b, "MSFT", func() time.Time { return *now }); err == nil || b.submits != 0 || len(st.Intents) != 0 {
 				t.Fatal("bad current data reached transport", err, b.submits, st.Intents)
