@@ -99,6 +99,7 @@ struct WheelView: View {
             }
             if let fixed = s.config.fixed_policy {
                 row("Selection", fixed.label)
+                row("Schedule", fixed.scheduleLabel)
                 detail("This policy is bound to its release and configuration. Legacy mode switches and discretionary closes are unavailable.")
             } else if let currentSelection = s.config.selectionMode {
                 HStack(spacing: 8) {
@@ -132,8 +133,8 @@ struct WheelView: View {
             row("Target", "Linux msi · Robinhood MCP")
             row("Execution", s.mode == "live" ? "Live" : "Read only · orders disabled")
             row("Live Readiness", s.live_readiness.map { $0.ready ? (s.config.restrictedOrders ? "Passed · restricted standard orders" : "Passed · one-click activation") : "Checking / blocked" } ?? "Checking")
-            if s.config.fixed_policy != nil, s.live_readiness?.ready == true {
-                detail("Integration verified. Orders still wait for their weekly clock, fresh market data and current account checks.")
+            if let fixed = s.config.fixed_policy, s.live_readiness?.ready == true {
+                detail(fixed.readinessDetail)
             }
             if s.config.restrictedOrders {
                 menuNotice("Advanced/OCO visibility unknown. Keep this account exclusive to AutoWheel; no manual or contingent orders.", symbol: "exclamationmark.triangle", color: .yellow)
@@ -328,6 +329,10 @@ struct WheelView: View {
                 section(fixed.label) {
                     detail("Choose an expiry 21–45 calendar days away, closest to 30 days. Puts use strikes at or below 90% of the underlying midpoint; calls use at least 105%. Choose the identity before checking liquidity. A missing target skips the symbol.")
                     detail("Capture once 31 minutes before the regular close on the first exchange session of the week. Refresh that same contract for execution one minute later, within a four-minute window. Restarting cannot recreate the signal.")
+                    if fixed.usesTP75 {
+                        detail("Check owned puts and covered calls every exchange session, normally at 15:29 ET, for at least 75% capture after opening and closing fee allowances. Refresh for a bounded buyback at 15:30 ET. Early-close sessions use the actual close; a consumed opportunity cannot be retried that day.")
+                        detail("A call buyback keeps the shares and their capital usage. Reentry waits for a later eligible weekly opening and settled cash. Fee allowances are ceilings, not reported actual fees; a moved ask or failed account check can skip the close.")
+                    }
                     detail("Write calls only on the own settled 100-share lot, above its acquisition price plus declared fee allowances. Hold stock otherwise. Open losses remain exposed; a sale floor does not limit portfolio drawdown.")
                 }
                 section("Limits and execution") {

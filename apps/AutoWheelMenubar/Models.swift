@@ -39,7 +39,7 @@ struct WheelConfig: Decodable {
     // so the selector disables instead of mislabeling.
     var selectionMode: SelectionMode? {
         if let fixed_policy {
-            return fixed_policy.spec.id == "conservative-rd1-floor-hold-v1" ? .conservative : nil
+            return fixed_policy.isConservative ? .conservative : nil
         }
         guard let raw = selection_mode, !raw.isEmpty else { return .balanced }
         return SelectionMode(rawValue: raw)
@@ -49,7 +49,25 @@ struct WheelConfig: Decodable {
 struct FixedPolicyDescriptor: Decodable {
     struct Spec: Decodable { let id: String }
     let spec: Spec
-    var label: String { spec.id == "conservative-rd1-floor-hold-v1" ? "Conservative · floor + hold" : "Unknown fixed policy" }
+    var usesTP75: Bool { spec.id == "conservative-rd1-floor-tp75-v1" }
+    var isConservative: Bool { spec.id == "conservative-rd1-floor-hold-v1" || usesTP75 }
+    var label: String {
+        switch spec.id {
+        case "conservative-rd1-floor-hold-v1": return "Conservative · floor + hold"
+        case "conservative-rd1-floor-tp75-v1": return "Conservative · floor + TP75"
+        default: return "Unknown fixed policy"
+        }
+    }
+    var scheduleLabel: String {
+        guard isConservative else { return "Unknown schedule" }
+        return usesTP75 ? "Daily TP75 · weekly openings" : "Weekly openings"
+    }
+    var readinessDetail: String {
+        guard isConservative else { return "Unknown policy. Native readiness and release binding are required." }
+        return usesTP75
+            ? "Integration verified. Daily profit checks and weekly openings still require their scheduled signals, fresh market data and current account checks."
+            : "Integration verified. Openings still require their weekly signal, fresh market data and current account checks."
+    }
 }
 
 struct WheelPosition: Decodable {

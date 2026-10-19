@@ -29,7 +29,7 @@ final class WheelModel: ObservableObject {
     var trayColor: NSColor {
         if !connected { return error == nil && lastResponse == nil ? .systemGray : .systemRed }
         if status?.halted == true || ["blocked", "waiting_configuration"].contains(status?.stage ?? "") { return .systemYellow }
-        if status?.stage == "outside_trading_window" || readOnly { return NSColor(srgbRed: 0.18, green: 0.76, blue: 1, alpha: 1) }
+        if status?.trading_window_open == false || status?.stage == "outside_trading_window" || readOnly { return NSColor(srgbRed: 0.18, green: 0.76, blue: 1, alpha: 1) }
         return .systemGreen
     }
     var color: Color { Color(nsColor: trayColor) }
@@ -39,8 +39,10 @@ final class WheelModel: ObservableObject {
         if status?.stage == "blocked" { return status?.halted == true ? "Paused · action required" : "Attention · action required" }
         if status?.halted == true { return status?.live_readiness?.ready == true ? "Ready · live trading paused" : "Paused · checking readiness" }
         if ["blocked", "waiting_configuration"].contains(status?.stage ?? "") { return "Attention · \(status?.title ?? "Setup required")" }
-        if status?.stage == "outside_trading_window" { return "Off market · standby" }
-        return readOnly ? "Read only · scans enabled" : "Live · entries enabled"
+        if readOnly { return "Read only · scans enabled" }
+        if status?.trading_window_open == false || status?.stage == "outside_trading_window" { return "Off market · standby" }
+        if status?.config.fixed_policy != nil && status?.stage == "fixed_holding" { return "Live · scheduled" }
+        return "Live · entries enabled"
     }
     func start() {
         Task { await refresh() }
