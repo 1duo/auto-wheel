@@ -58,8 +58,9 @@ func executionFixture(t *testing.T, outcome string) (*Execution, *State, *int) {
 	at := time.Now().In(wheel.Eastern)
 	for day := 1; day <= 10; day++ {
 		d := at.AddDate(0, 0, day)
-		atCandidate := time.Date(d.Year(), d.Month(), d.Day(), 10, 0, 0, 0, wheel.Eastern)
-		if wheel.TradingWindow(atCandidate) {
+		// ASAP openings are claimed only from close-30m.
+		atCandidate := time.Date(d.Year(), d.Month(), d.Day(), 15, 31, 0, 0, wheel.Eastern)
+		if opens, ok := wheel.ASAPEntryOpens(atCandidate); ok && !atCandidate.Before(opens) {
 			at = atCandidate
 			break
 		}

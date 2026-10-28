@@ -439,8 +439,8 @@ func (c *FixedController) executeNativeClaimed(ctx context.Context, config Confi
 		executionAt = clock()
 		var open bool
 		deadline, open = ASAPEntryDeadline(executionAt)
-		if !open {
-			return errors.Join(ErrASAPDeferred, errors.New("ASAP opening cutoff passed before claim"))
+		if !open || !asapEntryOpen(executionAt) {
+			return errors.Join(ErrASAPDeferred, errors.New("ASAP opening window is closed at claim"))
 		}
 		signal.Phase, signal.TransitionAt = "claimed", executionAt
 		f = c.copy()

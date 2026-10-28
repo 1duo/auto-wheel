@@ -71,7 +71,7 @@ func asapFixture(t *testing.T) (*FixedController, *State, *fixedMemoryJournal, C
 	if err != nil {
 		t.Fatal(err)
 	}
-	now := new(time.Date(2026, 10, 20, 10, 0, 0, 0, Eastern))
+	now := new(time.Date(2026, 10, 20, 15, 31, 0, 0, Eastern))
 	config.FixedPolicy.Spec.ID, config.FixedPolicy.Spec.Limits.Slots, config.MaxSymbols = FixedConservativeASAPPolicy, 5, 5
 	next, err = EnableFixedASAP(next, config, now.Add(-time.Minute))
 	if err != nil {
@@ -163,7 +163,7 @@ func TestASAPReadAdmissionDeferralsDoNotConsumeSubmission(t *testing.T) {
 			}
 			b.snapshotErr, b.refreshErr, b.reviewErr, b.afterReview = nil, nil, nil, nil
 			b.snapshot.AvailableCash, b.snapshot.Options = cash, nil
-			*now = time.Date(2026, 10, 20, 10, 2, 0, 0, Eastern)
+			*now = time.Date(2026, 10, 20, 15, 33, 0, 0, Eastern)
 			b.evidence = original
 			b.evidence.Market = fixedQueueEvidence("MSFT", "put", *now)
 			if err := c.ExecuteASAP(t.Context(), config, b, b.evidence.Market, func() time.Time { return *now }); err != nil || b.submits != 1 {
@@ -215,6 +215,47 @@ func TestASAPClaimUnknownAndUnsentNeverRetry(t *testing.T) {
 				t.Fatal("unknown submission lost durable reference")
 			}
 		})
+	}
+}
+
+// New claims open with the scheduled close-30m sale and keep the close-15m
+// cutoff. Earlier session minutes read nothing and consume no claim.
+func TestASAPEntryWaitsForScheduledDeadline(t *testing.T) {
+	for _, tc := range []struct {
+		day          string
+		hour, minute int
+		want         bool
+	}{{"2026-10-20", 9, 35, false}, {"2026-10-20", 15, 29, false}, {"2026-10-20", 15, 30, true}, {"2026-10-20", 15, 44, true},
+		{"2026-10-20", 15, 45, false}, {"2026-11-27", 12, 29, false}, {"2026-11-27", 12, 30, true}, {"2026-11-27", 12, 45, false},
+		{"2026-11-26", 15, 30, false}, {"2026-10-24", 15, 30, false}} {
+		day, _ := time.ParseInLocation(time.DateOnly, tc.day, Eastern)
+		at := day.Add(time.Duration(tc.hour)*time.Hour + time.Duration(tc.minute)*time.Minute)
+		if asapEntryOpen(at) != tc.want {
+			t.Fatal("ASAP entry window edge changed", tc)
+		}
+	}
+	c, st, _, config, b, now := asapFixture(t)
+	*now = time.Date(2026, 10, 20, 10, 0, 0, 0, Eastern)
+	b.evidence.Market = fixedQueueEvidence("MSFT", "put", *now)
+	s, _ := b.Snapshot(t.Context())
+	s.At = *now
+	if got := c.ASAPSymbols(config, s, *now); len(got) != 0 {
+		t.Fatal("morning scan offered ASAP symbols", got)
+	}
+	if started, err := c.BeginASAPScan(config, s, *now); started || err != nil {
+		t.Fatal("morning scan started broker reads", started, err)
+	}
+	if err := c.ExecuteASAP(t.Context(), config, b, b.evidence.Market, func() time.Time { return *now }); !errors.Is(err, ErrASAPDeferred) ||
+		b.submits != 0 || len(st.Intents) != 0 || len(st.Fixed.Replenishment.Attempts) != 0 {
+		t.Fatal("morning ASAP opening was claimed or sent", err)
+	}
+	*now = time.Date(2026, 10, 20, 15, 30, 0, 0, Eastern)
+	b.evidence.Market = fixedQueueEvidence("MSFT", "put", *now)
+	if err := c.ExecuteASAP(t.Context(), config, b, b.evidence.Market, func() time.Time { return *now }); err != nil || b.submits != 1 {
+		t.Fatal("deferred opening lost at the scheduled sale", err)
+	}
+	if a := st.Fixed.Replenishment.Attempts[asapKey("MSFT", *now)]; !a.At.Equal(*now) || !a.Deadline.Equal(time.Date(2026, 10, 20, 15, 45, 0, 0, Eastern)) {
+		t.Fatal("scheduled claim lost its session binding", a.At, a.Deadline)
 	}
 }
 

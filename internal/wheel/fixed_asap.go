@@ -44,6 +44,21 @@ func ASAPEntryDeadline(now time.Time) (time.Time, bool) {
 	return close.Add(-15 * time.Minute), known && TradingWindow(now)
 }
 
+// ASAPEntryOpens is the first moment a session's ASAP openings may be claimed:
+// the scheduled close-30m sale. The 2021-2026 causal entry replay found earlier
+// same-day sales paid wider spreads and larger tails with no timing benefit.
+// It gates new claims only; stored claims keep their original session binding.
+func ASAPEntryOpens(now time.Time) (time.Time, bool) {
+	close, known := SessionClose(now)
+	return close.Add(-30 * time.Minute), known && TradingWindow(now)
+}
+
+func asapEntryOpen(now time.Time) bool {
+	opens, known := ASAPEntryOpens(now)
+	deadline, open := ASAPEntryDeadline(now)
+	return known && open && !now.Before(opens) && now.Before(deadline)
+}
+
 func (f FixedPolicyState) validateASAP(s State) error {
 	r := f.Replenishment
 	if f.Spec.ID != FixedConservativeASAPPolicy {
@@ -169,7 +184,7 @@ func EnableFixedASAP(s State, config Config, now time.Time) (State, error) {
 }
 
 func (c *FixedController) ASAPSymbols(config Config, s Snapshot, now time.Time) []string {
-	if c.check() != nil || c.spec.ID != FixedConservativeASAPPolicy || !TradingWindow(now) ||
+	if c.check() != nil || c.spec.ID != FixedConservativeASAPPolicy || !asapEntryOpen(now) ||
 		c.state.Fixed.Replenishment == nil || !c.onlyRestingIntents() || !fresh(s.At, now, c.spec.MaxQuoteAge) || s.Account != c.spec.Account {
 		return nil
 	}
@@ -251,8 +266,8 @@ func (c *FixedController) ExecuteASAP(ctx context.Context, config Config, b Fixe
 	now := clock()
 	symbol := input.Contract.Symbol
 	if c.spec.ID != FixedConservativeASAPPolicy || !slices.Contains(config.FixedPolicy.Roster.Symbols, symbol) && c.state.Positions[symbol].OwnedShares != 100 ||
-		!TradingWindow(now) || config.FixedPolicy.Roster.KnownAt.After(now) || config.FixedPolicy.Roster.From > now.In(Eastern).Format(time.DateOnly) || config.FixedPolicy.Roster.Through < now.In(Eastern).Format(time.DateOnly) {
-		return errors.Join(ErrASAPDeferred, errors.New("ASAP session or roster is unavailable"))
+		!asapEntryOpen(now) || config.FixedPolicy.Roster.KnownAt.After(now) || config.FixedPolicy.Roster.From > now.In(Eastern).Format(time.DateOnly) || config.FixedPolicy.Roster.Through < now.In(Eastern).Format(time.DateOnly) {
+		return errors.Join(ErrASAPDeferred, errors.New("ASAP entry window, session or roster is unavailable"))
 	}
 	chosen, err := contractpolicy.Choose("conservative", input.Contract.Kind, now.In(Eastern).Format(time.DateOnly), symbol, input.Stock, input.Menu)
 	if err != nil || chosen == nil || *chosen != input.Contract {

@@ -338,7 +338,7 @@ struct WheelView: View {
             if model.deployment == .moomoo, c.fixed_policy == nil, let target = s.executionTargetLabel {
                 section(target) {
                     detail("Target: expiry 21–45 days away, closest to 30 days; put strikes at or below 90% of the underlying midpoint, calls at or above 105% and the owned-stock acquisition floor. One contract per symbol, at most \(c.max_symbols) managed symbols.")
-                    detail("Use a resting fee-aware 75% profit target and replenish eligible funded slots during the regular session. Claims and unknown submissions survive restart and cannot be retried automatically.")
+                    detail("Use a resting fee-aware 75% profit target and replenish eligible funded slots from 30 minutes before the regular close. Claims and unknown submissions survive restart and cannot be retried automatically.")
                     row("Execution", "Pending broker qualification")
                     row("Capital ceiling", money(c.max_collateral_cents, decimals: false))
                     row("Cash reserve", money(c.cash_reserve_cents, decimals: false))
@@ -348,7 +348,7 @@ struct WheelView: View {
                 section(fixed.label) {
                     detail("Choose an expiry 21–45 calendar days away, closest to 30 days. Puts use strikes at or below 90% of the underlying midpoint; calls use at least 105%. Choose the identity before checking liquidity. A missing target skips the symbol.")
                     if fixed.replenishesASAP {
-                        detail("Replenish eligible funded slots during the regular session, excluding the first five and last fifteen minutes. Each symbol has one durable submission claim per session; restarting cannot recreate a claim.")
+                        detail("Replenish eligible funded slots from 30 until 15 minutes before the regular close (15:30–15:45 ET on regular sessions). Earlier same-day sales paid wider spreads in research. Each symbol has one durable submission claim per session; restarting cannot recreate a claim.")
                     } else {
                         detail("Capture once 31 minutes before the regular close on the first exchange session of the week. Refresh that same contract for execution one minute later, within a four-minute window. Restarting cannot recreate the signal.")
                     }
