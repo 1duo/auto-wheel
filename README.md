@@ -16,6 +16,8 @@ Follow [setup and operations](docs/operations.md) to connect Robinhood and run. 
 
 Local status: `http://127.0.0.1:9841/status`. Weekly P&L calendar: `/calendar`, also available from the optional macOS menubar app.
 
+The [independent US Moomoo deployment](docs/moomoo-deployment.md) uses its own MSI service and account binding. Its service exposes read-only holdings on port 9842 and installs the native execution controls; the production financial-data mapper remains unfinished and trading stays paused. The unified menubar displays both accounts and routes their controls separately.
+
 [Readiness](docs/readiness.md) · [Strategy guide](docs/strategy.html) · [Simulation](docs/simulation-design.md) · [Research](docs/multiyear-research.md)
 
 Credentials, account state, personal reports and licensed datasets stay outside Git. Simulated returns are not broker performance.

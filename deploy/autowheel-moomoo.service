@@ -1,0 +1,32 @@
+[Unit]
+Description=AutoWheel Moomoo US (independent paused observer)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=120
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=yuduo
+Group=yuduo
+ExecStart=/home/yuduo/.local/share/autowheel-moomoo/current/autowheel-moomoo run --config /home/yuduo/.config/autowheel-moomoo/config.json --state /home/yuduo/.local/state/autowheel-moomoo --listen 127.0.0.1:9842
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=35
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/yuduo/.local/state/autowheel-moomoo
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LockPersonality=true
+RestrictRealtime=true
+SystemCallArchitectures=native
+LimitNOFILE=1024
+MemoryMax=256M
+TasksMax=32
+CPUQuota=25%
+
+[Install]
+WantedBy=multi-user.target

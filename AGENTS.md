@@ -1,6 +1,6 @@
 # AutoWheel
 
-Keep the wheel small: one contract per symbol, at most three managed symbols, one account.
+Keep the wheel small: one contract per symbol, at most five managed symbols, one account. The user explicitly authorized five slots for the independent Moomoo deployment; existing policy-specific limits remain bound to their own policy.
 Use Go 1.26+ and the Modern Go Guidelines CLI. No AI model in the trading loop.
 Money and quantities use checked integers; decimal parsing must be exact.
 Broker facts override local state. Missing or ambiguous data blocks orders.

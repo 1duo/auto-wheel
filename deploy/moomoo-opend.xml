@@ -1,0 +1,12 @@
+<moomoo_opend>
+  <ip>127.0.0.1</ip>
+  <api_port>11112</api_port>
+  <lang>en</lang>
+  <log_level>no</log_level>
+  <log_path>/var/lib/autowheel-moomoo-opend/logs</log_path>
+  <push_proto_type>1</push_proto_type>
+  <price_reminder_push>0</price_reminder_push>
+  <auto_hold_quote_right>0</auto_hold_quote_right>
+  <pdt_protection>1</pdt_protection>
+  <dtcall_confirmation>1</dtcall_confirmation>
+</moomoo_opend>
