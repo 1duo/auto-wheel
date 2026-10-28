@@ -14,11 +14,22 @@ import (
 
 const FixedConservativePolicy = "conservative-rd1-floor-hold-v1"
 const FixedConservativeTP75Policy = "conservative-rd1-floor-tp75-v1"
+const FixedConservativeRestingTP75Policy = "conservative-rd1-floor-tp75-resting-v2"
+const FixedConservativeASAPPolicy = "conservative-rd1-floor-tp75-asap-v3"
+
+func (p FixedPolicySpec) HasTP75() bool {
+	return p.ID == FixedConservativeTP75Policy || p.HasRestingTP75()
+}
+
+func (p FixedPolicySpec) HasRestingTP75() bool {
+	return p.ID == FixedConservativeRestingTP75Policy || p.ID == FixedConservativeASAPPolicy
+}
 
 type FixedPolicyConfig struct {
 	Spec                 FixedPolicySpec `json:"spec"`
 	Roster               FixedRoster     `json:"roster"`
 	ImportLegacyStateSHA string          `json:"import_legacy_state_sha256,omitempty"`
+	PreflightReads       bool            `json:"preflight_reads,omitzero"`
 }
 
 func (f FixedPolicyConfig) validate(c Config) error {
@@ -35,9 +46,9 @@ func (f FixedPolicyConfig) validate(c Config) error {
 	through, endErr := time.Parse(time.DateOnly, f.Roster.Through)
 	if err != nil || endErr != nil || from.After(through) || f.Roster.KnownAt.IsZero() ||
 		!fixedSHA(f.Roster.SourceSHA) || !slices.Equal(c.Symbols, f.Roster.Symbols) ||
-		c.Account != f.Spec.Account || c.OrderCoveragePolicy != "exclusive_standard" ||
+		c.Account != f.Spec.Account || !ownedOrderLedger(c.OrderCoveragePolicy) ||
 		c.CoordinatorSocket != "" || c.PriorityProfitClose != nil || c.StrategyPreset != "" || c.SelectionMode != "" ||
-		c.MaxSymbols != 3 || c.SymbolLimitScope != "managed" || c.MaxCollateral != Cents(f.Spec.Limits.Account) ||
+		c.MaxSymbols != f.Spec.Limits.ManagedSlots() || c.SymbolLimitScope != "managed" || c.MaxCollateral != Cents(f.Spec.Limits.Account) ||
 		c.Reserve != Cents(f.Spec.Limits.Reserve) || c.Fee != f.Spec.OptionFeeBudget || c.MaxQuoteAgeSeconds != f.Spec.MaxQuoteAge {
 		return errors.New("invalid fixed-policy roster or native financial/configuration binding")
 	}
@@ -72,7 +83,10 @@ type FixedPolicySpec struct {
 }
 
 func (p FixedPolicySpec) Validate() error {
-	if p.ID != FixedConservativePolicy && p.ID != FixedConservativeTP75Policy || len(p.Account) < 4 || len(p.Account) > 32 ||
+	if p.ID == FixedConservativeASAPPolicy && p.Limits.Slots != 5 || p.ID != FixedConservativeASAPPolicy && p.Limits.Slots != 0 {
+		return errors.New("managed slots differ from the explicit fixed policy")
+	}
+	if p.ID != FixedConservativePolicy && !p.HasTP75() || len(p.Account) < 4 || len(p.Account) > 32 ||
 		strings.Trim(p.Account, "0123456789") != "" || !fixedSHA(p.FeeSourceSHA) || p.FeeKnownAt.IsZero() ||
 		p.OptionFeeBudget < 0 || p.OptionFeeBudget > 10000 || p.PhysicalFeeBudget < 0 || p.PhysicalFeeBudget > 10000 ||
 		p.MaxQuoteAge < 1 || p.MaxQuoteAge > 60 || p.Limits.Account <= 0 || p.Limits.Account > int64(MaxMoney) ||
@@ -137,14 +151,18 @@ type FixedBatch struct {
 }
 
 type FixedPolicyState struct {
-	Version    int                `json:"version"`
-	Spec       FixedPolicySpec    `json:"spec"`
-	PolicySHA  string             `json:"policy_sha256"`
-	BoundAt    time.Time          `json:"bound_at"`
-	Batch      *FixedBatch        `json:"batch,omitzero"`
-	Contracts  map[string]Option  `json:"open_contracts,omitempty"`
-	Legacy     *FixedLegacyImport `json:"legacy_import,omitzero"`
-	TakeProfit *FixedCloseBatch   `json:"take_profit,omitzero"`
+	Version             int                          `json:"version"`
+	Spec                FixedPolicySpec              `json:"spec"`
+	PolicySHA           string                       `json:"policy_sha256"`
+	BoundAt             time.Time                    `json:"bound_at"`
+	Batch               *FixedBatch                  `json:"batch,omitzero"`
+	Contracts           map[string]Option            `json:"open_contracts,omitempty"`
+	Legacy              *FixedLegacyImport           `json:"legacy_import,omitzero"`
+	TakeProfit          *FixedCloseBatch             `json:"take_profit,omitzero"`
+	RestingTP75Since    time.Time                    `json:"resting_tp75_since,omitzero"`
+	RestingTakeProfit   map[string]FixedRestingClose `json:"resting_take_profit,omitempty"`
+	RestingUnsentRearms map[string]FixedUnsentRearm  `json:"resting_unsent_rearms,omitempty"`
+	Replenishment       *FixedASAPState              `json:"asap_replenishment,omitzero"`
 }
 
 // FixedSignalEvidence is input to signal selection, not an order capability.
@@ -186,7 +204,7 @@ func fixedSignalDigest(s FixedSignal) string {
 }
 
 func fixedOrder(managed, roster []string) ([]string, error) {
-	if len(managed) > 3 || len(roster) < 1 || len(roster) > 10 || !slices.IsSorted(managed) {
+	if len(managed) > 5 || len(roster) < 1 || len(roster) > 10 || !slices.IsSorted(managed) {
 		return nil, errors.New("fixed signal roster is invalid")
 	}
 	seen := map[string]bool{}
@@ -221,12 +239,14 @@ func (f FixedPolicyState) validate(s State) error {
 	if err := f.validateLegacy(); err != nil {
 		return err
 	}
+	if err := f.validateASAP(s); err != nil {
+		return err
+	}
 	for symbol, p := range s.Positions {
-		_, entry, latest, known := FixedEntryTimes(p.PutOpenedAt)
 		inherited := f.inherited(symbol, p)
 		if !fixedSymbol(symbol) || p.PutID == "" && p.OwnedShares != 100 || p.CallID != "" && p.OwnedShares != 100 ||
 			p.PutOpenedAt.IsZero() || !strings.HasPrefix(p.Provenance, "autowheel put fill ") ||
-			!inherited && (p.PutOpenedAt.Before(f.BoundAt) || !known || p.PutOpenedAt.Before(entry) || p.PutOpenedAt.After(latest)) ||
+			!inherited && !f.openingClockAllowed(s, symbol, p) ||
 			p.OwnedShares == 100 && (p.InventoryAt.IsZero() || p.InventoryAt.Before(p.PutOpenedAt)) {
 			return errors.New("fixed policy contains unsupported inventory")
 		}
@@ -251,12 +271,12 @@ func (f FixedPolicyState) validate(s State) error {
 	}
 	if f.Batch == nil {
 		for _, in := range s.Intents {
-			if !in.Candidate.Closing {
+			if !in.Candidate.Closing && f.Spec.ID != FixedConservativeASAPPolicy {
 				return errors.New("fixed opening intent has no signal batch")
 			}
 		}
 		for symbol, p := range s.Positions {
-			if !f.inherited(symbol, p) {
+			if !f.inherited(symbol, p) && !f.asapOwnedOpening(s, symbol, p) {
 				return errors.New("fixed inventory has no signal batch or exact legacy import")
 			}
 		}
@@ -265,7 +285,7 @@ func (f FixedPolicyState) validate(s State) error {
 	b := f.Batch
 	day, err := time.ParseInLocation(time.DateOnly, b.Day, Eastern)
 	signal, execution, latest, ok := FixedEntryTimes(day)
-	if err != nil || !ok || b.PolicySHA != f.PolicySHA || !b.SignalAt.Equal(signal) || !b.ExecutionAt.Equal(execution) ||
+	if err != nil || !ok || !f.batchPolicyMatches(*b) || !b.SignalAt.Equal(signal) || !b.ExecutionAt.Equal(execution) ||
 		!b.LatestAt.Equal(latest) || b.StartedAt.Before(signal) || !b.StartedAt.Before(execution) || b.StartedAt.Before(f.BoundAt) ||
 		b.PreviousSHA != "" && !fixedSHA(b.PreviousSHA) || !fixedSHA(b.Roster.SourceSHA) || b.Roster.KnownAt.IsZero() ||
 		b.Roster.KnownAt.After(signal) || b.Roster.From > b.Day || b.Roster.Through < b.Day ||
@@ -279,7 +299,7 @@ func (f FixedPolicyState) validate(s State) error {
 		}
 	}
 	order, err := fixedOrder(b.Managed, b.Roster.Symbols)
-	if err != nil || len(order) != len(b.Signals) {
+	if err != nil || len(order) != len(b.Signals) || len(b.Managed) > f.Spec.Limits.ManagedSlots() {
 		return errors.New("fixed signal batch is incomplete")
 	}
 	if b.Phase == "capturing" {
@@ -342,6 +362,9 @@ func (f FixedPolicyState) validate(s State) error {
 		if q.Closing {
 			continue
 		} // Bound to its daily TP claim above.
+		if f.Spec.ID == FixedConservativeASAPPolicy {
+			continue // Bound to the dedicated causal ASAP attempt ledger.
+		}
 		i := slices.IndexFunc(b.Signals, func(v FixedSignal) bool { return v.Symbol == symbol })
 		if !fixedSymbol(symbol) || q.Closing || in.At.Before(f.BoundAt) || i < 0 || b.Signals[i].Phase != "claimed" ||
 			in.At.Before(b.Signals[i].TransitionAt) || in.At.After(b.LatestAt) ||

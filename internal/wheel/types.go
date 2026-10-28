@@ -96,7 +96,7 @@ func (c Config) SymbolCollateralLimit() Cents {
 	if c.FixedPolicy != nil {
 		return Cents(c.FixedPolicy.Spec.Limits.Symbol)
 	}
-	if c.MaxCollateral < 0 || c.MaxCollateral > MaxMoney || c.MaxSymbols < 1 || c.MaxSymbols > 3 {
+	if c.MaxCollateral < 0 || c.MaxCollateral > MaxMoney || c.MaxSymbols < 1 || c.MaxSymbols > 5 {
 		return 0
 	}
 	if c.MaxCollateral == 0 {
@@ -155,12 +155,16 @@ func (c Config) WithSelectionMode(mode SelectionMode) (Config, error) {
 }
 
 func (c Config) Validate() error {
-	if c.OrderCoveragePolicy != "" && c.OrderCoveragePolicy != "full" && c.OrderCoveragePolicy != "exclusive_standard" {
+	if c.OrderCoveragePolicy != "" && c.OrderCoveragePolicy != "full" && !ownedOrderLedger(c.OrderCoveragePolicy) {
 		return errors.New("unknown order coverage policy")
 	}
 	if c.OrderCoveragePolicy == "exclusive_standard" {
 		if c.Account == "" || c.RetiredTradePulse == "" || c.CoordinatorSocket != "" || c.ExclusiveOrdersSince.IsZero() || c.ExclusiveOrdersSince.After(time.Now()) {
 			return errors.New("exclusive standard orders require a bound account, native retirement and its activity cutoff")
+		}
+	} else if c.OrderCoveragePolicy == CompleteMoomooOrders {
+		if c.Account == "" || c.TradePulseStateDir != "" || c.RetiredTradePulse != "" || c.CoordinatorSocket != "" || c.CoordinatorPolicy != "" || c.ExclusiveOrdersSince.IsZero() || c.ExclusiveOrdersSince.After(time.Now()) || c.FixedPolicy == nil {
+			return errors.New("Moomoo complete coverage requires independent account, cutoff and native fixed policy")
 		}
 	} else if !c.ExclusiveOrdersSince.IsZero() {
 		return errors.New("activity cutoff requires exclusive standard order policy")
@@ -202,8 +206,12 @@ func (c Config) Validate() error {
 	if c.SymbolLimitScope != "" && c.SymbolLimitScope != "account" && c.SymbolLimitScope != "managed" {
 		return errors.New("symbol limit scope must be account or managed")
 	}
-	if c.MaxSymbols < 1 || c.MaxSymbols > 3 || len(c.Symbols) < 1 || len(c.Symbols) > 15 {
-		return errors.New("require 1–15 symbols and 1–3 slots")
+	maxSlots := 5
+	if c.FixedPolicy != nil {
+		maxSlots = c.FixedPolicy.Spec.Limits.ManagedSlots()
+	}
+	if c.MaxSymbols < 1 || c.MaxSymbols > maxSlots || len(c.Symbols) < 1 || len(c.Symbols) > 15 {
+		return errors.New("require 1–15 symbols and slots within the explicit policy ceiling")
 	}
 	seen := map[string]bool{}
 	for _, s := range c.Symbols {
@@ -277,6 +285,9 @@ type Order struct {
 	OptionID          string    `json:"option_id,omitempty"`
 	Kind              string    `json:"kind,omitempty"`
 	Strike            Cents     `json:"strike_cents,omitzero"`
+	Limit             Cents     `json:"limit_cents,omitzero"`
+	TimeInForce       string    `json:"time_in_force,omitempty"`
+	Type              string    `json:"type,omitempty"`
 	Quantity          int       `json:"quantity"`
 	Filled            int       `json:"filled"`
 	State             string    `json:"state"`
@@ -325,10 +336,11 @@ type Quote struct {
 }
 
 type Candidate struct {
-	Closing      bool   `json:"closing,omitzero"`
-	CloseLimit   Cents  `json:"close_limit_cents,omitzero"`
-	EntryCredit  Cents  `json:"entry_credit_cents,omitzero"`
-	EntryOrderID string `json:"entry_order_id,omitempty"`
+	Closing           bool   `json:"closing,omitzero"`
+	RestingTakeProfit bool   `json:"resting_take_profit,omitzero"`
+	CloseLimit        Cents  `json:"close_limit_cents,omitzero"`
+	EntryCredit       Cents  `json:"entry_credit_cents,omitzero"`
+	EntryOrderID      string `json:"entry_order_id,omitempty"`
 	Quote
 	NetPremium   Cents   `json:"net_premium_cents"`
 	Collateral   Cents   `json:"collateral_cents"`
@@ -385,7 +397,11 @@ func NewState() State {
 }
 
 func (s State) Validate() error {
-	if s.Version != 1 || s.Positions == nil || s.Intents == nil || len(s.Positions) > 3 || len(s.Intents) > 3 {
+	maxSlots := 5
+	if s.Fixed != nil {
+		maxSlots = s.Fixed.Spec.Limits.ManagedSlots()
+	}
+	if s.Version != 1 || s.Positions == nil || s.Intents == nil || len(s.Positions) > maxSlots || len(s.Intents) > maxSlots {
 		return errors.New("invalid journal schema or position count")
 	}
 	if len(s.CompletedOrders) > 1024 {
@@ -415,10 +431,13 @@ func (s State) Validate() error {
 		}
 	}
 	for symbol, in := range s.Intents {
+		if in.Candidate.RestingTakeProfit && (!in.Candidate.Closing || s.Fixed == nil || !s.Fixed.Spec.HasRestingTP75()) {
+			return errors.New("resting close requires its explicit fixed TP75 policy")
+		}
 		if !in.Candidate.Closing && (in.Candidate.CloseLimit != 0 || in.Candidate.EntryCredit != 0 || in.Candidate.EntryOrderID != "") {
 			return errors.New("opening intent contains close terms")
 		}
-		if in.Candidate.Closing && (in.Candidate.Kind != "put" && (in.Candidate.Kind != "call" || s.Fixed == nil || s.Fixed.Spec.ID != FixedConservativeTP75Policy) || in.Candidate.CloseLimit <= 0 || in.Candidate.CloseLimit > MaxMoney/100 || in.Candidate.EntryCredit <= 0 || in.Candidate.EntryCredit > MaxMoney) {
+		if in.Candidate.Closing && (in.Candidate.Kind != "put" && (in.Candidate.Kind != "call" || s.Fixed == nil || !s.Fixed.Spec.HasTP75()) || in.Candidate.CloseLimit <= 0 || in.Candidate.CloseLimit > MaxMoney/100 || in.Candidate.EntryCredit <= 0 || in.Candidate.EntryCredit > MaxMoney) {
 			return errors.New("invalid close intent")
 		}
 		if symbol != in.Candidate.Symbol || in.Ref == "" || in.Candidate.ID == "" || in.Candidate.Strike <= 0 || in.Candidate.Strike > MaxMoney/100 || in.At.IsZero() {

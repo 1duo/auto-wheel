@@ -8,6 +8,14 @@ import (
 
 const StandardOrderWarning = "Restricted standard orders only. Advanced/OCO visibility is unknown. Do not place manual, contingent or other-strategy orders in this account. Observed outside activity blocks execution."
 
+// CompleteMoomooOrders requires independently qualified account-wide broker
+// coverage. It never borrows Robinhood's restricted-account retirement policy.
+const CompleteMoomooOrders = "moomoo_complete"
+
+func ownedOrderLedger(policy string) bool {
+	return policy == "exclusive_standard" || policy == CompleteMoomooOrders
+}
+
 // CheckOrderScope applies before reconciliation can infer assignment ownership.
 // A software lease cannot prove absence of broker-side contingent orders; this
 // explicitly selected policy uses observed standard activity and cash/stock
@@ -22,8 +30,8 @@ func CheckOrderScope(c Config, st State, s Snapshot) error {
 // The fixed controller can reuse standard-order ownership checks after checking
 // its own policy binding. Legacy callers must use the public fenced entry point.
 func checkOrderScope(c Config, st State, s Snapshot) error {
-	if c.OrderCoveragePolicy != "exclusive_standard" {
-		if s.OrderCoveragePolicy == "exclusive_standard" {
+	if !ownedOrderLedger(c.OrderCoveragePolicy) {
+		if ownedOrderLedger(s.OrderCoveragePolicy) {
 			return errors.New("restricted order snapshot cannot satisfy full coverage policy")
 		}
 		return nil
@@ -34,7 +42,7 @@ func checkOrderScope(c Config, st State, s Snapshot) error {
 	if s.OrderCoveragePolicy != c.OrderCoveragePolicy || s.Account != c.Account || st.Account != c.Account {
 		return errors.New("exclusive standard snapshot/account policy mismatch")
 	}
-	if len(s.ExternalSymbols) != 0 || s.ExternalCapital != 0 {
+	if c.OrderCoveragePolicy != CompleteMoomooOrders && (len(s.ExternalSymbols) != 0 || s.ExternalCapital != 0) {
 		return errors.New("outside or unsupported inventory in exclusive standard account")
 	}
 	seen := map[string]bool{}

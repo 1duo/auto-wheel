@@ -72,9 +72,15 @@ func Reconcile(st *State, s Snapshot, now time.Time) error {
 			return errors.New("broker order ID differs from durable receipt")
 		}
 		if !o.Terminal() {
+			// A unique working order carrying this intent's own ref is the broker's
+			// proof of acceptance after a lost receipt; retain its ID.
+			if in.OrderID == "" && o.ID != "" {
+				in.OrderID = o.ID
+				st.Intents[symbol] = in
+			}
 			continue
 		}
-		if s.OrderCoveragePolicy == "exclusive_standard" && (o.ID == "" || len(st.CompletedOrders) >= 1024) {
+		if ownedOrderLedger(s.OrderCoveragePolicy) && (o.ID == "" || len(st.CompletedOrders) >= 1024) {
 			return errors.New("completed order ownership cannot be retained; freeze")
 		}
 		if o.Filled == 1 && in.Candidate.Closing {
@@ -136,7 +142,7 @@ func Reconcile(st *State, s Snapshot, now time.Time) error {
 		} else if o.State == "filled" {
 			return errors.New("filled order has no filled quantity")
 		}
-		if s.OrderCoveragePolicy == "exclusive_standard" {
+		if ownedOrderLedger(s.OrderCoveragePolicy) {
 			if st.CompletedOrders == nil {
 				st.CompletedOrders = map[string]OrderRecord{}
 			}
@@ -313,7 +319,7 @@ func Execute(ctx context.Context, c Config, st *State, store Store, b Broker, a 
 	if err = b.Review(ctx, a); err != nil {
 		return err
 	}
-	if c.OrderCoveragePolicy == "exclusive_standard" {
+	if ownedOrderLedger(c.OrderCoveragePolicy) {
 		// Review is not a reservation. Re-read all supported account facts after
 		// review and before writing the intent; no partial read can authorize it.
 		s, err = b.Snapshot(ctx)

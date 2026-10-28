@@ -27,6 +27,14 @@ type CapitalLimits struct {
 	Account int64 `json:"account_cents"`
 	Symbol  int64 `json:"symbol_cents"`
 	Reserve int64 `json:"reserve_cents"`
+	Slots   int   `json:"max_managed_symbols,omitzero"`
+}
+
+func (l CapitalLimits) ManagedSlots() int {
+	if l.Slots == 0 {
+		return 3
+	}
+	return l.Slots
 }
 
 type CapitalUse struct {
@@ -51,8 +59,9 @@ func CanOpen(l CapitalLimits, u CapitalUse) bool {
 			return false
 		}
 	}
-	if l.Account == 0 || l.Symbol == 0 || l.Symbol > l.Account || l.Reserve >= maxCapital ||
-		u.ActiveSymbols < 0 || u.ActiveSymbols > 3 || u.NewSymbol && u.ActiveSymbols >= 3 ||
+	slots := l.ManagedSlots()
+	if l.Account == 0 || l.Symbol == 0 || l.Symbol > l.Account || l.Reserve >= maxCapital || slots < 1 || slots > 5 ||
+		u.ActiveSymbols < 0 || u.ActiveSymbols > slots || u.NewSymbol && u.ActiveSymbols >= slots ||
 		u.NewCollateral > u.Available || u.Debit > u.Available-u.NewCollateral {
 		return false
 	}

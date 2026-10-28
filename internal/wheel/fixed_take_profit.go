@@ -86,7 +86,9 @@ func fixedCloseMarket(spec FixedPolicySpec, a Candidate, now time.Time) error {
 	limit, err := FixedTP75Limit(a.EntryCredit, spec.OptionFeeBudget, a.Tick)
 	if err != nil || !a.Closing || a.Quantity != 1 || a.Strike <= 0 || a.Strike > MaxMoney/100 ||
 		!a.Standard || !a.Tradable || a.CloseLimit <= 0 || a.CloseLimit > limit || a.CloseLimit%a.Tick != 0 ||
-		a.Ask <= 0 || a.Ask > a.CloseLimit || a.Bid < 0 || a.Bid > a.Ask || a.AskSize < 1 {
+		a.RestingTakeProfit != (spec.HasRestingTP75()) ||
+		!a.RestingTakeProfit && a.Ask > a.CloseLimit ||
+		a.Ask <= 0 || a.Bid < 0 || a.Bid > a.Ask || a.AskSize < 1 {
 		return errors.New("TP75 quote does not meet the fee-aware profit floor")
 	}
 	for _, at := range []time.Time{a.At, a.UnderlyingAt} {
@@ -101,6 +103,12 @@ func fixedCloseMarket(spec FixedPolicySpec, a Candidate, now time.Time) error {
 }
 
 func (f FixedPolicyState) validateTakeProfit(s State) error {
+	if err := f.validateRestingTakeProfit(s); err != nil {
+		return err
+	}
+	if f.Spec.HasRestingTP75() {
+		return nil
+	}
 	if f.Spec.ID != FixedConservativeTP75Policy {
 		if f.TakeProfit != nil {
 			return errors.New("hold policy cannot carry TP authority")
@@ -337,10 +345,14 @@ func (c *FixedController) PreviewTakeProfit(config Config, a Candidate, s Snapsh
 	if err := c.ReconcileNative(config, s, now); err != nil {
 		return err
 	}
-	if c.spec.ID != FixedConservativeTP75Policy || !fixedCloseOwnership(*c.state, a) || c.state.Fixed.Contracts[a.Symbol] != a.Option ||
+	committed, err := c.restingCloseCommitment(s)
+	if err != nil {
+		return err
+	}
+	if !c.spec.HasTP75() || !fixedCloseOwnership(*c.state, a) || c.state.Fixed.Contracts[a.Symbol] != a.Option ||
 		!a.Standard || !a.Tradable || a.Tick < 1 || a.CloseLimit <= 0 || a.CloseLimit > MaxMoney/100 || a.CloseLimit%a.Tick != 0 ||
-		a.Bid < 0 || a.Bid > a.Ask || a.Ask <= 0 || a.Ask > a.CloseLimit || a.AskSize < 1 || a.EntryCredit <= c.spec.OptionFeeBudget ||
-		s.AvailableCash < config.Reserve || a.CloseLimit*100+c.spec.OptionFeeBudget > s.AvailableCash-config.Reserve {
+		a.Bid < 0 || a.Bid > a.Ask || a.Ask <= 0 || !a.RestingTakeProfit && a.Ask > a.CloseLimit || a.AskSize < 1 || a.EntryCredit <= c.spec.OptionFeeBudget ||
+		s.AvailableCash < config.Reserve || committed > s.AvailableCash-config.Reserve || a.CloseLimit*100+c.spec.OptionFeeBudget > s.AvailableCash-config.Reserve-committed {
 		return errors.New("TP preview lacks exact owned fill, usable book or settled buyback cash")
 	}
 	return nil

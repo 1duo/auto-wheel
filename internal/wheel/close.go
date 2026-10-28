@@ -14,6 +14,21 @@ func (a Candidate) OrderTerms() (side, effect, direction string, limit Cents) {
 	return "sell", "open", "credit", a.Bid
 }
 
+func (a Candidate) TimeInForce() string {
+	if a.RestingTakeProfit {
+		return "gtc"
+	}
+	return "gfd"
+}
+
+func (a Candidate) TradingWindow(now time.Time) bool {
+	if a.RestingTakeProfit {
+		_, ok := FixedRestingCloseDeadline(now)
+		return ok
+	}
+	return TradingWindow(now)
+}
+
 type CloseBroker interface {
 	Snapshot(context.Context) (Snapshot, error)
 	CloseQuote(context.Context, State, string) (Candidate, error)

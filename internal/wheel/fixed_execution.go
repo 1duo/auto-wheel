@@ -61,8 +61,8 @@ func (c *FixedController) nativeConfig(config Config) error {
 	if err := config.Validate(); err != nil {
 		return err
 	}
-	if config.Account != c.spec.Account || config.OrderCoveragePolicy != "exclusive_standard" ||
-		config.CoordinatorSocket != "" || config.PriorityProfitClose != nil || config.MaxSymbols != 3 ||
+	if config.Account != c.spec.Account || !ownedOrderLedger(config.OrderCoveragePolicy) ||
+		config.CoordinatorSocket != "" || config.PriorityProfitClose != nil || config.MaxSymbols != c.spec.Limits.ManagedSlots() ||
 		config.SymbolLimitScope != "managed" || config.MaxCollateral != Cents(c.spec.Limits.Account) ||
 		config.Reserve != Cents(c.spec.Limits.Reserve) || config.Fee != c.spec.OptionFeeBudget ||
 		config.MaxQuoteAgeSeconds != c.spec.MaxQuoteAge {
@@ -112,6 +112,10 @@ func (c *FixedController) ReconcileNative(config Config, s Snapshot, now time.Ti
 	}
 	for _, o := range s.Orders {
 		in, pending := c.state.Intents[o.Symbol]
+		if pending && in.Candidate.RestingTakeProfit && (in.OrderID != "" && in.OrderID == o.ID || in.OrderID == "" && in.Ref == o.Ref) &&
+			(o.Type != "limit" || o.TimeInForce != "gtc" || o.Limit != in.Candidate.CloseLimit) {
+			return errors.New("resting TP broker order price or duration changed")
+		}
 		if pending && !o.Terminal() && (in.OrderID != "" && in.OrderID == o.ID || in.OrderID == "" && in.Ref == o.Ref) {
 			q := in.Candidate.Option
 			if o.Kind != q.Kind || o.Strike != q.Strike {
@@ -174,6 +178,18 @@ func (c *FixedController) canExecute(config Config, signal FixedSignal, e FixedE
 	if err := c.nativeConfig(config); err != nil {
 		return Candidate{}, err
 	}
+	if c.spec.ID == FixedConservativeASAPPolicy {
+		r := c.state.Fixed.Replenishment
+		if r == nil {
+			return Candidate{}, errors.New("ASAP journal binding is absent")
+		}
+		a, found := r.Attempts[asapKey(signal.Symbol, now)]
+		if !found || a.Signal.DataSHA != signal.DataSHA || a.Signal.Phase != "claimed" ||
+			a.RosterSHA != fixedDigest(config.FixedPolicy.Roster) || now.Before(a.At) || !now.Before(a.Deadline) || !TradingWindow(now) {
+			return Candidate{}, errors.New("ASAP execution lacks its current single-use claim")
+		}
+		return c.openingCandidate(signal, e, s, now, true)
+	}
 	b := c.state.Fixed.Batch
 	i := -1
 	if b != nil {
@@ -182,15 +198,22 @@ func (c *FixedController) canExecute(config Config, signal FixedSignal, e FixedE
 	if i < 0 || b.Signals[i].Phase != "claimed" || fixedSignalDigest(b.Signals[i]) != signal.DataSHA ||
 		fixedDigest(b.Roster) != fixedDigest(config.FixedPolicy.Roster) ||
 		now.Before(b.ExecutionAt) || now.After(b.LatestAt) || !TradingWindow(now) ||
-		len(c.state.Intents) != 0 || !fresh(s.At, now, c.spec.MaxQuoteAge) {
+		!c.onlyRestingIntents() || !fresh(s.At, now, c.spec.MaxQuoteAge) {
 		return Candidate{}, errors.New("fixed execution has no current single-use claim or fresh account")
 	}
 	return c.openingCandidate(signal, e, s, now, true)
 }
 
 func (c *FixedController) openingCandidate(signal FixedSignal, e FixedExecutionEvidence, s Snapshot, now time.Time, requireFresh bool) (Candidate, error) {
-	if len(c.state.Intents) != 0 || s.Account != c.spec.Account || !fresh(s.At, now, c.spec.MaxQuoteAge) {
+	if !c.onlyRestingIntents() || s.Account != c.spec.Account || !fresh(s.At, now, c.spec.MaxQuoteAge) {
 		return Candidate{}, errors.New("fixed opening lacks a reconciled fresh account")
+	}
+	committed, err := c.restingCloseCommitment(s)
+	if err != nil {
+		return Candidate{}, err
+	}
+	if _, pending := c.state.Intents[signal.Symbol]; pending {
+		return Candidate{}, errors.New("fixed opening cannot overwrite a resting close")
 	}
 	for _, r := range c.state.CompletedOrders {
 		if r.Symbol == signal.Symbol && r.Closing && r.Filled == 1 {
@@ -208,7 +231,18 @@ func (c *FixedController) openingCandidate(signal FixedSignal, e FixedExecutionE
 	if err != nil {
 		return Candidate{}, err
 	}
-	u := contractpolicy.CapitalUse{Available: int64(s.AvailableCash), Debit: int64(c.spec.OptionFeeBudget), ActiveSymbols: len(c.state.Positions)}
+	// The resting policy targets every opening. A fill at or above this limit
+	// prices its target at an equal or finer tick, so a credit that cannot fund
+	// TP75 here would leave a position that can never receive one.
+	if c.spec.HasRestingTP75() {
+		if _, err := FixedTP75Limit(a.Bid*100, c.spec.OptionFeeBudget, a.Tick); err != nil {
+			return Candidate{}, errors.New("fixed opening credit cannot fund its resting TP75 target")
+		}
+	}
+	if committed > MaxMoney-c.spec.OptionFeeBudget {
+		return Candidate{}, errors.New("fixed cash commitments overflow")
+	}
+	u := contractpolicy.CapitalUse{Available: int64(s.AvailableCash), Debit: int64(c.spec.OptionFeeBudget + committed), ActiveSymbols: len(c.state.Positions)}
 	for symbol, p := range c.state.Positions {
 		if !p.MissingSince.IsZero() {
 			return Candidate{}, errors.New("fixed opening waits for unresolved settlement")
@@ -285,8 +319,22 @@ func (c *FixedController) PreviewNative(config Config, e FixedExecutionEvidence,
 	return c.openingCandidate(signal, e, s, now, false)
 }
 
-// ExecuteNative consumes the signal BEFORE reads or reviews. Any rejection
-// ends this signal's opportunity. No error path automatically retries transport.
+func (c *FixedController) nativeExecutionReads(ctx context.Context, config Config, b FixedBroker, signal FixedSignal, clock func() time.Time) (Snapshot, FixedExecutionEvidence, error) {
+	s, err := b.Snapshot(ctx)
+	if err != nil {
+		return Snapshot{}, FixedExecutionEvidence{}, err
+	}
+	if err := c.ReconcileNative(config, s, clock()); err != nil {
+		return Snapshot{}, FixedExecutionEvidence{}, err
+	}
+	e, err := b.RefreshForFixed(ctx, *signal.Contract, clock)
+	return s, e, err
+}
+
+// ExecuteNative optionally moves its initial reads before the claim, without
+// adding requests. Known financial/liquidity rejection still consumes the
+// opportunity and cannot starve later roster entries. After the claim, every
+// rejection ends the opportunity; no error path retries transport.
 func (c *FixedController) ExecuteNative(ctx context.Context, config Config, b FixedBroker, symbol string, clock func() time.Time) error {
 	if b == nil || clock == nil {
 		return errors.New("fixed execution needs broker and clock")
@@ -294,45 +342,119 @@ func (c *FixedController) ExecuteNative(ctx context.Context, config Config, b Fi
 	if err := c.nativeConfig(config); err != nil {
 		return err
 	}
+	var s Snapshot
+	var e FixedExecutionEvidence
+	var observed FixedSignal
+	if config.FixedPolicy.PreflightReads {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		var err error
+		observed, _, err = c.readySignal(symbol, clock())
+		if err != nil {
+			return err
+		}
+		if fixedDigest(c.state.Fixed.Batch.Roster) != fixedDigest(config.FixedPolicy.Roster) {
+			return errors.New("fixed preflight roster differs from its captured batch")
+		}
+		s, e, err = c.nativeExecutionReads(ctx, config, b, observed, clock)
+		if err != nil {
+			return err
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if e.Market.Contract != *observed.Contract {
+			return errors.New("fixed preflight did not read the exact signal identity")
+		}
+		for _, at := range []time.Time{e.Market.BidAt, e.Market.AskAt, e.Market.OptionAt} {
+			if !fresh(at, clock(), c.spec.MaxQuoteAge) {
+				return errors.New("fixed preflight source is missing, future or stale")
+			}
+		}
+	}
 	signal, err := c.Claim(symbol, clock())
 	if err != nil {
 		return err
 	}
-	s, err := b.Snapshot(ctx)
-	if err != nil {
+	if config.FixedPolicy.PreflightReads {
+		if observed.DataSHA != signal.DataSHA || *observed.Contract != *signal.Contract {
+			return errors.New("fixed preflight signal changed before claim")
+		}
+	} else {
+		s, e, err = c.nativeExecutionReads(ctx, config, b, signal, clock)
+		if err != nil {
+			return err
+		}
+	}
+	return c.executeNativeClaimed(ctx, config, b, signal, e, s, clock)
+}
+
+// Both opening policies share the complete late review, account refresh,
+// reference persistence and unknown-outcome fence.
+func (c *FixedController) executeNativeClaimed(ctx context.Context, config Config, b FixedBroker, signal FixedSignal, e FixedExecutionEvidence, s Snapshot, clock func() time.Time) error {
+	symbol := signal.Symbol
+	asap := c.spec.ID == FixedConservativeASAPPolicy
+	admit := func(s Snapshot, at time.Time) (Candidate, error) {
+		if !asap {
+			return c.canExecute(config, signal, e, s, at)
+		}
+		if !slices.Contains(c.ASAPSymbols(config, s, at), symbol) || !fresh(signal.ObservedAt, at, c.spec.MaxQuoteAge) {
+			return Candidate{}, errors.New("ASAP fresh source, capacity or single-use lifecycle changed")
+		}
+		return c.openingCandidate(signal, e, s, at, true)
+	}
+	deferBeforeClaim := func(err error) error {
+		if asap {
+			return errors.Join(ErrASAPDeferred, err)
+		}
 		return err
 	}
-	if err = c.ReconcileNative(config, s, clock()); err != nil {
-		return err
-	}
-	e, err := b.RefreshForFixed(ctx, *signal.Contract, clock)
+	a, err := admit(s, clock())
 	if err != nil {
-		return err
-	}
-	a, err := c.canExecute(config, signal, e, s, clock())
-	if err != nil {
-		return err
+		return deferBeforeClaim(err)
 	}
 	if err = b.Review(ctx, a); err != nil {
-		return err
+		return deferBeforeClaim(err)
 	}
 	// Review does not reserve cash or shares. Reconcile all account facts again.
 	s, err = b.Snapshot(ctx)
 	if err != nil {
-		return err
+		return deferBeforeClaim(err)
 	}
 	if err = c.ReconcileNative(config, s, clock()); err != nil {
-		return err
+		return deferBeforeClaim(err)
 	}
-	a, err = c.canExecute(config, signal, e, s, clock())
+	a, err = admit(s, clock())
 	if err != nil {
-		return err
+		return deferBeforeClaim(err)
 	}
 	ref, err := newRef()
 	if err != nil {
 		return err
 	}
+	var executionAt, deadline time.Time
+	var f FixedPolicyState
+	if asap {
+		executionAt = clock()
+		var open bool
+		deadline, open = ASAPEntryDeadline(executionAt)
+		if !open {
+			return errors.Join(ErrASAPDeferred, errors.New("ASAP opening cutoff passed before claim"))
+		}
+		signal.Phase, signal.TransitionAt = "claimed", executionAt
+		f = c.copy()
+		if f.Replenishment.Attempts == nil {
+			f.Replenishment.Attempts = map[string]FixedASAPAttempt{}
+		}
+		f.Replenishment.Attempts[asapKey(symbol, executionAt)] = FixedASAPAttempt{Signal: signal, Ref: ref, At: executionAt, Deadline: deadline, RosterSHA: fixedDigest(config.FixedPolicy.Roster)}
+	} else {
+		executionAt, deadline = c.state.Fixed.Batch.ExecutionAt, c.state.Fixed.Batch.LatestAt
+	}
 	next := *c.state
+	if asap {
+		next.Fixed = &f
+	}
 	next.Intents = maps.Clone(next.Intents)
 	next.Intents[symbol] = Intent{Ref: ref, Candidate: a, At: clock()}
 	if err = c.saveState(next); err != nil {
@@ -344,13 +466,12 @@ func (c *FixedController) ExecuteNative(ctx context.Context, config Config, b Fi
 		delete(next.Intents, symbol)
 		return errors.Join(cause, c.saveState(next))
 	}
-	deadline := c.state.Fixed.Batch.LatestAt
 	guard := func() error {
 		at := clock()
 		if err := c.check(); err != nil {
 			return err
 		}
-		if ctx.Err() != nil || at.Before(c.state.Fixed.Batch.ExecutionAt) || at.After(deadline) || !TradingWindow(at) ||
+		if ctx.Err() != nil || at.Before(executionAt) || at.After(deadline) || !TradingWindow(at) ||
 			c.state.Intents[symbol].Ref != ref || !fresh(a.At, at, c.spec.MaxQuoteAge) ||
 			!fresh(e.Market.BidAt, at, c.spec.MaxQuoteAge) || !fresh(e.Market.AskAt, at, c.spec.MaxQuoteAge) || !fresh(s.At, at, c.spec.MaxQuoteAge) {
 			return ErrNotSubmitted

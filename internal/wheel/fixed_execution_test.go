@@ -17,9 +17,12 @@ type fixedExecutionBroker struct {
 	snapshot        Snapshot
 	evidence        FixedExecutionEvidence
 	readCount       int
+	refreshes       int
 	reviews         int
 	submits         int
 	beforeRead      func(int)
+	snapshotErr     error
+	refreshErr      error
 	afterReview     func()
 	submitErr       error
 	emptyID         bool
@@ -32,12 +35,19 @@ func (b *fixedExecutionBroker) Snapshot(context.Context) (Snapshot, error) {
 	if b.beforeRead != nil {
 		b.beforeRead(b.readCount)
 	}
+	if b.snapshotErr != nil {
+		return Snapshot{}, b.snapshotErr
+	}
 	s := b.snapshot
 	s.At = *b.now
 	return s, nil
 }
 
 func (b *fixedExecutionBroker) RefreshForFixed(_ context.Context, chosen contractpolicy.Contract, _ func() time.Time) (FixedExecutionEvidence, error) {
+	b.refreshes++
+	if b.refreshErr != nil {
+		return FixedExecutionEvidence{}, b.refreshErr
+	}
 	if chosen.ID != b.evidence.Market.Contract.ID {
 		return FixedExecutionEvidence{}, errors.New("wrong fixed identity")
 	}

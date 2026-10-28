@@ -35,7 +35,7 @@ func NewFixedController(spec FixedPolicySpec, state *State, store FixedStore) (*
 	if state == nil || store == nil {
 		return nil, errors.New("fixed controller needs the locked account journal")
 	}
-	if spec.ID == FixedConservativeTP75Policy {
+	if spec.HasTP75() {
 		if _, ok := store.(FixedPolicyArchiver); !ok {
 			return nil, errors.New("TP75 requires a durable policy journal archiver")
 		}
@@ -86,6 +86,13 @@ func (c *FixedController) saveState(next State) error {
 func (c *FixedController) copy() FixedPolicyState {
 	f := *c.state.Fixed
 	f.Contracts = maps.Clone(f.Contracts)
+	f.RestingTakeProfit = maps.Clone(f.RestingTakeProfit)
+	f.RestingUnsentRearms = maps.Clone(f.RestingUnsentRearms)
+	if f.Replenishment != nil {
+		r := *f.Replenishment
+		r.Attempts = maps.Clone(r.Attempts)
+		f.Replenishment = &r
+	}
 	if f.TakeProfit != nil {
 		b := *f.TakeProfit
 		b.Signals = slices.Clone(b.Signals)
@@ -121,7 +128,7 @@ func (c *FixedController) Bind(s Snapshot, now time.Time) error {
 		return c.check()
 	}
 	if len(c.state.Positions) != 0 || len(c.state.Intents) != 0 || len(s.Options) != 0 ||
-		len(s.ExternalSymbols) != 0 || s.ExternalCapital != 0 {
+		(s.OrderCoveragePolicy != CompleteMoomooOrders && (len(s.ExternalSymbols) != 0 || s.ExternalCapital != 0)) {
 		return errors.New("fixed policy transition requires broker-confirmed flat old lifecycles")
 	}
 	for _, h := range s.Shares {
@@ -134,7 +141,17 @@ func (c *FixedController) Bind(s Snapshot, now time.Time) error {
 			return errors.New("fixed policy transition has a working broker order")
 		}
 	}
-	return c.save(FixedPolicyState{Version: 1, Spec: c.spec, PolicySHA: c.spec.Digest(), BoundAt: now})
+	f := FixedPolicyState{Version: 1, Spec: c.spec, PolicySHA: c.spec.Digest(), BoundAt: now}
+	if c.spec.HasRestingTP75() {
+		f.RestingTP75Since = now
+	}
+	if c.spec.ID == FixedConservativeASAPPolicy {
+		if s.OrderCoveragePolicy != CompleteMoomooOrders {
+			return errors.New("fresh ASAP binding requires complete independent Moomoo facts")
+		}
+		f.Replenishment = &FixedASAPState{Initial: true, Since: now, SourceStateSHA: fixedDigest(*c.state)}
+	}
+	return c.save(f)
 }
 
 // Begin persists a capture reservation BEFORE provider reads. The complete
@@ -144,7 +161,7 @@ func (c *FixedController) Begin(roster FixedRoster, now time.Time) error {
 		return err
 	}
 	signal, execution, latest, ok := FixedEntryTimes(now)
-	if !ok || now.Before(signal) || !now.Before(execution) || len(c.state.Intents) != 0 {
+	if !ok || now.Before(signal) || !now.Before(execution) || !c.onlyRestingIntents() {
 		return errors.New("fixed signal capture is outside its bucket or has unresolved submission")
 	}
 	f := c.copy()
@@ -315,32 +332,41 @@ func (c *FixedController) Recover(now time.Time) error {
 	return nil
 }
 
-// Claim grants one attempt to the future native fixed executor, not permission
-// to trade. That executor must refresh identity/books and recheck account,
-// ownership, acquisition basis, costs, capacity, readiness and the durable ref_id.
-func (c *FixedController) Claim(symbol string, now time.Time) (FixedSignal, error) {
+func (c *FixedController) readySignal(symbol string, now time.Time) (FixedSignal, int, error) {
 	if err := c.check(); err != nil {
-		return FixedSignal{}, err
+		return FixedSignal{}, -1, err
 	}
-	f := c.copy()
-	b := f.Batch
-	if b == nil || b.Phase != "sealed" || now.Before(b.ExecutionAt) || now.After(b.LatestAt) || !TradingWindow(now) || len(c.state.Intents) != 0 {
-		return FixedSignal{}, errors.New("fixed execution bucket is closed or submission is unresolved")
+	b := c.state.Fixed.Batch
+	if b == nil || b.PolicySHA != c.state.Fixed.PolicySHA || b.Phase != "sealed" || now.Before(b.ExecutionAt) || now.After(b.LatestAt) || !TradingWindow(now) || !c.onlyRestingIntents() {
+		return FixedSignal{}, -1, errors.New("fixed execution bucket is closed or submission is unresolved")
 	}
 	i := slices.IndexFunc(b.Signals, func(s FixedSignal) bool { return s.Symbol == symbol })
 	if i < 0 || b.Signals[i].Phase != "ready" {
-		return FixedSignal{}, errors.New("fixed signal was not prepared or has already been consumed")
+		return FixedSignal{}, -1, errors.New("fixed signal was not prepared or has already been consumed")
 	}
 	for _, prior := range b.Signals[:i] {
 		if prior.Phase == "ready" {
-			return FixedSignal{}, errors.New("fixed signal cannot overtake an earlier roster entry")
+			return FixedSignal{}, -1, errors.New("fixed signal cannot overtake an earlier roster entry")
 		}
-	}
-	b.Signals[i].Phase, b.Signals[i].TransitionAt = "claimed", now
-	if err := c.save(f); err != nil {
-		return FixedSignal{}, err
 	}
 	result := b.Signals[i]
 	result.Contract = new(*result.Contract)
+	return result, i, nil
+}
+
+// Claim grants one attempt, not permission to trade. The executor must prove fresh
+// identity/books and recheck account, ownership, basis, costs, capacity, readiness
+// and the durable ref_id even after a successful optional read preflight.
+func (c *FixedController) Claim(symbol string, now time.Time) (FixedSignal, error) {
+	result, i, err := c.readySignal(symbol, now)
+	if err != nil {
+		return FixedSignal{}, err
+	}
+	f := c.copy()
+	f.Batch.Signals[i].Phase, f.Batch.Signals[i].TransitionAt = "claimed", now
+	if err := c.save(f); err != nil {
+		return FixedSignal{}, err
+	}
+	result.Phase, result.TransitionAt = "claimed", now
 	return result, nil
 }

@@ -119,6 +119,9 @@ func (c *FixedController) importLegacy(config Config, s Snapshot, now time.Time)
 	}
 	f := FixedPolicyState{Version: 1, Spec: c.spec, PolicySHA: c.spec.Digest(), BoundAt: now,
 		Legacy: &FixedLegacyImport{StateSHA: digest, Source: source}, Contracts: map[string]Option{}}
+	if c.spec.HasRestingTP75() {
+		f.RestingTP75Since = now
+	}
 	for _, op := range s.Options {
 		p, owned := source.Positions[op.Symbol]
 		if !owned || op.ChainID == "" || op.Quantity != 1 ||
