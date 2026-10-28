@@ -13,17 +13,20 @@ final class WheelModel: ObservableObject {
     var changed: (() -> Void)?
     private var timer: Timer?
     private var fetching = false
-    private let api = OperatorAPI()
+    let deployment: BrokerDeployment
+    private let api: OperatorAPI
+
+    init(deployment: BrokerDeployment = .robinhood) {
+        self.deployment = deployment
+        self.api = OperatorAPI(deployment: deployment)
+    }
 
     var connected: Bool {
         guard error == nil, let at = lastResponse else { return false }
         return Date().timeIntervalSince(at) < 90
     }
     var canEnableLive: Bool {
-        guard connected, status?.hasPendingSelection != true, status?.live_capable == true, let check = status?.live_readiness, check.ready,
-              let at = timestamp(check.at), Date().timeIntervalSince(at) < 1200,
-              let broker = status?.broker, let brokerAt = timestamp(broker.at), Date().timeIntervalSince(brokerAt) < 600 else { return false }
-        return (status?.intents ?? [:]).isEmpty
+        connected && status?.canActivate(deployment: deployment) == true
     }
     var readOnly: Bool { status?.mode == "read_only" }
     var trayColor: NSColor {
@@ -37,16 +40,20 @@ final class WheelModel: ObservableObject {
         if !connected { return lastResponse == nil ? (error == nil ? "Checking · Linux msi" : "Unavailable · Linux msi") : "Stale · Linux msi" }
         if status?.hasPendingSelection == true { return "Restart required · selection pending" }
         if status?.stage == "blocked" { return status?.halted == true ? "Paused · action required" : "Attention · action required" }
-        if status?.halted == true { return status?.live_readiness?.ready == true ? "Ready · live trading paused" : "Paused · checking readiness" }
+        if status?.halted == true {
+            if deployment == .moomoo && status?.live_capable != true { return "Paused · observation only" }
+            return status?.live_readiness?.ready == true ? "Ready · live trading paused" : "Paused · checking readiness"
+        }
         if ["blocked", "waiting_configuration"].contains(status?.stage ?? "") { return "Attention · \(status?.title ?? "Setup required")" }
-        if readOnly { return "Read only · scans enabled" }
+        if readOnly { return deployment == .moomoo ? "Observation only · refreshing holdings" : "Read only · scans enabled" }
         if status?.trading_window_open == false || status?.stage == "outside_trading_window" { return "Off market · standby" }
         if status?.config.fixed_policy != nil && status?.stage == "fixed_holding" { return "Live · scheduled" }
         return "Live · entries enabled"
     }
     func start() {
         Task { await refresh() }
-        timer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+        guard timer == nil else { return }
+        timer = Timer.scheduledTimer(withTimeInterval: 20, repeats: true) { [weak self] _ in
             Task { @MainActor in await self?.refresh() }
         }
     }
@@ -67,6 +74,7 @@ final class WheelModel: ObservableObject {
     }
     func control(_ action: OperatorAction) async {
         guard connected, !busy, action == .halt || action == .live || readOnly else { return }
+        if action == .live && !canEnableLive { return }
         busy = true; notice = nil
         defer { busy = false; changed?() }
         do {
@@ -76,6 +84,14 @@ final class WheelModel: ObservableObject {
             case .resume: notice = "Read-only scanning resumed. Live trading remains disabled."
             case .live: notice = "Live trading enabled. Orders wait for market hours and fresh safety checks."
             case .refresh: notice = "Read-only scan queued. Market hours and setup checks still apply."
+            }
+            if deployment == .moomoo {
+                switch action {
+                case .refresh: notice = "Moomoo holdings refresh queued."
+                case .halt: notice = "Moomoo pause saved. Accepted broker orders continue; holdings keep refreshing."
+                case .resume: notice = "Moomoo holdings observation continues. Live trading requires native activation."
+                case .live: notice = "Moomoo live trading enabled under its independent five-slot policy."
+                }
             }
             await refresh()
         } catch { notice = "Control outcome unconfirmed: \(error.localizedDescription). Refresh status before retrying." }
@@ -94,12 +110,12 @@ final class WheelModel: ObservableObject {
         await refresh()
     }
     func selectMode(_ mode: SelectionMode) async {
-        guard connected, !busy, status?.config.fixed_policy == nil, status?.config.selectionMode != nil else { return }
+        guard deployment == .robinhood, connected, !busy, status?.config.fixed_policy == nil, status?.config.selectionMode != nil else { return }
         busy = true; notice = nil
         defer { busy = false; changed?() }
         do {
             try await api.selection(mode)
-            _ = try await MSIService.run(.restart)
+            _ = try await MSIService.run(.restart, deployment: deployment)
             let restartedAt = Date()
             var applied = false
             for _ in 0..<6 {
@@ -131,17 +147,18 @@ final class WheelModel: ObservableObject {
         busy = true; notice = nil
         defer { busy = false; changed?() }
         do {
-            let output = try await MSIService.run(action)
+            let output = try await MSIService.run(action, deployment: deployment)
             if action == .logs {
                 logs = output.isEmpty ? "No log lines returned." : output
             } else {
-                notice = "msi service: \(action.rawValue) completed."
+                notice = "\(deployment.name) msi service: \(action.rawValue) completed."
                 try? await Task.sleep(for: .milliseconds(600))
                 await refresh()
             }
         } catch { notice = "msi command outcome unconfirmed: \(error.localizedDescription)" }
     }
     func openCalendar() async {
+        guard deployment == .robinhood else { return }
         if let url = Bundle.main.url(forResource: "calendar", withExtension: "html") {
             NSWorkspace.shared.open(url)
         } else if await api.calendarAvailable() {

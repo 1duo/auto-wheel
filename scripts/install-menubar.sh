@@ -29,7 +29,7 @@ cp "$task_root/internal/calendarui/calendar.html" "$task_root/internal/calendaru
 node "$task_root/scripts/attach-calendar-history.cjs" "$task_build/Contents/Resources/calendar.html"
 codesign --force --sign - "$task_build"
 task_uid=$(id -u)
-for task_label in com.autowheel.menubar com.autowheel.msi-tunnel; do
+for task_label in com.autowheel.menubar; do
   launchctl bootout "gui/$task_uid/$task_label" 2>/dev/null || true
 done
 rsync -a --delete "$task_build/" "$task_app/"
@@ -42,6 +42,10 @@ agents = os.path.join(home, 'Library/LaunchAgents')
 entries = {
   'com.autowheel.msi-tunnel': {
     'ProgramArguments': ['/usr/bin/ssh', '-N', '-T', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '-o', 'ConnectTimeout=8', '-o', 'ExitOnForwardFailure=yes', '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=2', '-L', '127.0.0.1:19841:127.0.0.1:9841', 'yuduo@192.168.1.50'],
+    'KeepAlive': True, 'ThrottleInterval': 15,
+  },
+  'com.autowheel.moomoo-msi-tunnel': {
+    'ProgramArguments': ['/usr/bin/ssh', '-N', '-T', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '-o', 'ConnectTimeout=8', '-o', 'ExitOnForwardFailure=yes', '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=2', '-L', '127.0.0.1:19842:127.0.0.1:9842', 'yuduo@192.168.1.50'],
     'KeepAlive': True, 'ThrottleInterval': 15,
   },
   'com.autowheel.menubar': {
@@ -59,6 +63,10 @@ for label, entry in entries.items():
     with open(path, 'wb') as f: plistlib.dump(entry, f)
     os.chmod(path, 0o600)
 PY
-launchctl bootstrap "gui/$task_uid" "$HOME/Library/LaunchAgents/com.autowheel.msi-tunnel.plist"
+for task_tunnel in com.autowheel.msi-tunnel com.autowheel.moomoo-msi-tunnel; do
+  if ! launchctl print "gui/$task_uid/$task_tunnel" >/dev/null 2>&1; then
+    launchctl bootstrap "gui/$task_uid" "$HOME/Library/LaunchAgents/$task_tunnel.plist"
+  fi
+done
 launchctl bootstrap "gui/$task_uid" "$HOME/Library/LaunchAgents/com.autowheel.menubar.plist"
-printf 'Installed %s (API tunnel 127.0.0.1:19841 → msi:9841)\n' "$task_app"
+printf 'Installed %s (Robinhood 19841 → msi:9841; Moomoo 19842 → msi:9842)\n' "$task_app"

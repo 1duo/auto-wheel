@@ -20,7 +20,7 @@ struct WheelView: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
                 Circle().fill(model.color).frame(width: 9, height: 9)
-                Text(model.title).font(MenuFont.title)
+                Text("\(model.deployment.name) · \(model.title)").font(MenuFont.title)
                 Spacer()
                 if model.busy { ProgressView().controlSize(.small) }
             }.padding(.horizontal, 14).padding(.vertical, 10)
@@ -66,8 +66,10 @@ struct WheelView: View {
                 actionRow("Positions and Readiness", symbol: "list.bullet.rectangle") { model.selectedTab = 3 }
                 actionRow("Activity and Logs", symbol: "text.alignleft") { model.selectedTab = 2 }
             }
-            actionRow("Open Weekly P&L Calendar", symbol: "calendar") { Task { await model.openCalendar() } }
-                .help("View weekly results or load saved historical simulation reports")
+            if model.deployment == .robinhood {
+                actionRow("Open Weekly P&L Calendar", symbol: "calendar") { Task { await model.openCalendar() } }
+                    .help("View Robinhood results or load saved historical simulation reports")
+            }
             actionRow("Open Strategy Guide", symbol: "book") { model.openGuide() }
             menuDivider()
             actionRow("Quit AutoWheel", symbol: "power") { NSApp.terminate(nil) }
@@ -78,7 +80,7 @@ struct WheelView: View {
     @ViewBuilder private var overview: some View {
         if let s = model.status {
             HStack(spacing: 8) {
-                Label("Live Trading", systemImage: s.mode == "live" && !s.halted ? "bolt.circle" : "bolt.slash.circle")
+                Label("\(model.deployment.name) Live Trading", systemImage: s.mode == "live" && !s.halted ? "bolt.circle" : "bolt.slash.circle")
                     .font(MenuFont.action)
                 Spacer(minLength: 8)
                 Toggle("", isOn: Binding(
@@ -97,7 +99,13 @@ struct WheelView: View {
                     .help("Submit one buy-to-close order capped at the fresh ask, only if profit remains after fee allowances. No additional dialog. An existing live session continues after reconciliation.")
                 }
             }
-            if let fixed = s.config.fixed_policy {
+            if model.deployment == .moomoo, s.config.fixed_policy == nil, let target = s.executionTargetLabel {
+                section("Configured strategy target") {
+                    row("Policy", target)
+                    row("Managed slots", "\(s.config.max_symbols) · one contract per symbol")
+                    detail("Broker execution qualification is pending. Holdings continue to refresh while trading is paused.")
+                }
+            } else if let fixed = s.config.fixed_policy {
                 row("Selection", fixed.label)
                 row("Schedule", fixed.scheduleLabel)
                 detail("This policy is bound to its release and configuration. Legacy mode switches and discretionary closes are unavailable.")
@@ -117,20 +125,20 @@ struct WheelView: View {
                     .labelsHidden()
                     .pickerStyle(.menu)
                     .controlSize(.small)
-                    .disabled(!model.connected || model.busy)
+                    .disabled(!model.connected || model.busy || model.deployment == .moomoo)
                     .help("Changing selection pauses trading and restarts the daemon; it does not enable live trading.")
                 }.padding(.horizontal, 14).padding(.vertical, 4)
             } else {
                 row("Selection", "Unknown")
             }
-            if s.config.fixed_policy == nil {
+            if s.config.fixed_policy == nil && model.deployment == .robinhood {
                 detail("Selection changes pause trading and restart the msi service to load. Live activation still needs fresh readiness.")
             }
             if s.hasPendingSelection {
                 menuNotice("Selection \(s.pending_selection_mode ?? "change") pending · restart msi service, then refresh to verify. Trading stays paused.", symbol: "exclamationmark.triangle", color: .yellow)
             }
             menuDivider()
-            row("Target", "Linux msi · Robinhood MCP")
+            row("Target", "Linux msi · \(model.deployment.name)")
             row("Execution", s.mode == "live" ? "Live" : "Read only · orders disabled")
             row("Live Readiness", s.live_readiness.map { $0.ready ? (s.config.restrictedOrders ? "Passed · restricted standard orders" : "Passed · one-click activation") : "Checking / blocked" } ?? "Checking")
             if let fixed = s.config.fixed_policy, s.live_readiness?.ready == true {
@@ -139,17 +147,19 @@ struct WheelView: View {
             if s.config.restrictedOrders {
                 menuNotice("Advanced/OCO visibility unknown. Keep this account exclusive to AutoWheel; no manual or contingent orders.", symbol: "exclamationmark.triangle", color: .yellow)
             }
-            row("Shared Coordinator", s.coordinator.map { $0.healthShort } ?? "Not configured")
+            if model.deployment == .robinhood {
+                row("Shared Coordinator", s.coordinator.map { $0.healthShort } ?? "Not configured")
+            }
             row("Order Window", s.trading_window_open == true ? "Open · freshness checks apply" : "Closed · standby")
             row(s.config.symbol_limit_scope == "managed" ? "Managed Symbols" : "Active Symbols", s.activeSymbols.map { "\($0.count) / \(s.config.max_symbols)" } ?? "— / \(s.config.max_symbols)")
             menuDivider()
             sectionHeader("Account")
             if let info = s.account_info {
-                row("Agentic Account", "••••\(info.account_last4)")
+                row("\(model.deployment.name) Account", "••••\(info.account_last4)")
                 row("Broker Read", age(info.at))
             }
             row("Capital Ceiling", s.config.max_collateral_cents == 0 ? "Broker available cash" : money(s.config.max_collateral_cents, decimals: false))
-            row("Available Cash · last known", s.broker.map { money($0.available_cash_cents) } ?? s.account_info.map { money($0.available_cash_cents) } ?? "Unavailable")
+            row(s.account_info?.balance_label ?? "Available Cash · last known", s.broker.map { money($0.available_cash_cents) } ?? s.account_info?.balanceText ?? "Unavailable")
             row("Cash Reserve", money(s.config.cash_reserve_cents, decimals: false))
             if let coord = s.coordinator {
                 row("Executable Shared Cash", money(coord.available_cash_cents))
@@ -157,7 +167,7 @@ struct WheelView: View {
                 row("Managed Capital", money(coord.committed_capital_cents))
                 row("Peer Exclusions", coord.peerSummary)
                 row("Coordinator Observed", age(coord.at))
-            } else {
+            } else if model.deployment == .robinhood {
                 detail("Shared execution is not configured.")
             }
             menuDivider()
@@ -177,7 +187,7 @@ struct WheelView: View {
             }
             if let holdings = s.account_info?.holdings, !holdings.isEmpty, (s.positions ?? [:]).isEmpty {
                 ForEach(holdings.indices, id: \.self) { index in
-                    row(holdings[index].symbol, "\(holdings[index].quantity) shares · \(s.coordinator?.ownerLabel(for: holdings[index].symbol) ?? "external")")
+                    row(holdings[index].symbol, "\(holdings[index].quantity) \(holdings[index].security_type ?? "units") · \(holdings[index].side ?? "") · external")
                 }
             }
             if !(s.intents ?? [:]).isEmpty {
@@ -195,13 +205,13 @@ struct WheelView: View {
             DisclosureGroup("Service Controls", isExpanded: $showServiceControls) {
                 serviceButtons
                 if model.readOnly {
-                    actionRow("Scan Now", symbol: "magnifyingglass") { Task { await model.control(.refresh) } }
-                        .disabled(!model.connected || model.busy || s.halted)
+                    actionRow(model.deployment == .moomoo ? "Refresh Holdings" : "Scan Now", symbol: "magnifyingglass") { Task { await model.control(.refresh) } }
+                        .disabled(!model.connected || model.busy || (model.deployment == .robinhood && s.halted))
                 }
-                detail("Use Live Trading above to activate. Pause does not cancel accepted broker orders.")
+                detail(model.deployment == .moomoo ? "Holdings can refresh while trading is disabled. Live operation requires broker qualification." : "Use Live Trading above to activate. Pause does not cancel accepted broker orders.")
             }.font(MenuFont.action).padding(.horizontal, 14).padding(.vertical, 7)
         } else {
-            row("Target", "Linux msi · Robinhood MCP")
+            row("Target", "Linux msi · \(model.deployment.name)")
             row("Execution", "Unverified")
             detail("Waiting for the daemon. Service controls use SSH directly.")
             menuDivider()
@@ -213,7 +223,7 @@ struct WheelView: View {
     @ViewBuilder private var brokerDetails: some View {
         if let s = model.status {
             if s.mode == "read_only" {
-                banner("Orders disabled", "This daemon can inspect and plan. It cannot place orders in read-only mode.", color: .blue)
+                banner("Orders disabled", model.deployment == .moomoo ? "This deployment observes authorized funds and holdings. Broker qualification is pending." : "This daemon can inspect and plan. It cannot place orders in read-only mode.", color: .blue)
             } else {
                 banner("Live trading enabled", "Every order rechecks fresh quotes, account cash, positions and broker review. Turn off Live Trading to pause.", color: .red)
             }
@@ -222,10 +232,10 @@ struct WheelView: View {
                 banner("Restricted standard orders", s.account_info?.coverage_warning ?? "Advanced/OCO visibility is unknown. Keep this account exclusive to AutoWheel; no manual, contingent or other-strategy orders. Observed outside activity blocks execution.", color: .yellow)
             }
             section("Readiness") {
-                row("Agentic account configured", s.account_configured ? "Yes" : "Required")
+                row("\(model.deployment.name) account configured", s.account_configured ? "Yes" : "Required")
                 row("Private OAuth token file", s.token_present ? "Present" : "Missing")
                 if let info = s.account_info {
-                    row("Agentic account", "••••\(info.account_last4)")
+                    row("\(model.deployment.name) account", "••••\(info.account_last4)")
                     row("Authenticated broker read", age(info.at))
                     row("Complete account snapshot", info.snapshot_complete ? "Yes" : (s.config.restrictedOrders ? "No · advanced/OCO unknown" : "Blocked · partial display facts"))
                     if s.config.restrictedOrders {
@@ -325,25 +335,40 @@ struct WheelView: View {
 
     @ViewBuilder private var strategy: some View {
         if let s = model.status, let c = model.status?.config {
-            if let fixed = c.fixed_policy {
+            if model.deployment == .moomoo, c.fixed_policy == nil, let target = s.executionTargetLabel {
+                section(target) {
+                    detail("Target: expiry 21–45 days away, closest to 30 days; put strikes at or below 90% of the underlying midpoint, calls at or above 105% and the owned-stock acquisition floor. One contract per symbol, at most \(c.max_symbols) managed symbols.")
+                    detail("Use a resting fee-aware 75% profit target and replenish eligible funded slots during the regular session. Claims and unknown submissions survive restart and cannot be retried automatically.")
+                    row("Execution", "Pending broker qualification")
+                    row("Capital ceiling", money(c.max_collateral_cents, decimals: false))
+                    row("Cash reserve", money(c.cash_reserve_cents, decimals: false))
+                    detail("These are configured targets. This deployment currently observes the account; it cannot place orders or adopt existing holdings.")
+                }
+            } else if let fixed = c.fixed_policy {
                 section(fixed.label) {
                     detail("Choose an expiry 21–45 calendar days away, closest to 30 days. Puts use strikes at or below 90% of the underlying midpoint; calls use at least 105%. Choose the identity before checking liquidity. A missing target skips the symbol.")
-                    detail("Capture once 31 minutes before the regular close on the first exchange session of the week. Refresh that same contract for execution one minute later, within a four-minute window. Restarting cannot recreate the signal.")
-                    if fixed.usesTP75 {
+                    if fixed.replenishesASAP {
+                        detail("Replenish eligible funded slots during the regular session, excluding the first five and last fifteen minutes. Each symbol has one durable submission claim per session; restarting cannot recreate a claim.")
+                    } else {
+                        detail("Capture once 31 minutes before the regular close on the first exchange session of the week. Refresh that same contract for execution one minute later, within a four-minute window. Restarting cannot recreate the signal.")
+                    }
+                    if fixed.usesRestingTP75 {
+                        detail("Place one fee-aware GTC buyback target per verified opening fill to capture at least 75% of the net premium. Accepted targets remain at the broker while paused. Unknown or rejected attempts are not automatically resubmitted.")
+                    } else if fixed.usesTP75 {
                         detail("Check owned puts and covered calls every exchange session, normally at 15:29 ET, for at least 75% capture after opening and closing fee allowances. Refresh for a bounded buyback at 15:30 ET. Early-close sessions use the actual close; a consumed opportunity cannot be retried that day.")
                         detail("A call buyback keeps the shares and their capital usage. Reentry waits for a later eligible weekly opening and settled cash. Fee allowances are ceilings, not reported actual fees; a moved ask or failed account check can skip the close.")
                     }
                     detail("Write calls only on the own settled 100-share lot, above its acquisition price plus declared fee allowances. Hold stock otherwise. Open losses remain exposed; a sale floor does not limit portfolio drawdown.")
                 }
                 section("Limits and execution") {
-                    row("Managed symbols", "At most 3 · one contract / 100 shares each")
+                    row("Managed symbols", "At most \(c.max_symbols) · one contract / 100 shares each")
                     row("Capital ceiling", money(c.max_collateral_cents, decimals: false))
                     row("Cash reserve", money(c.cash_reserve_cents, decimals: false))
                     row("Option fee allowance", money(c.fee_per_contract_cents))
                     row("Maximum quote age", "\(c.max_quote_age_seconds) seconds")
                     detail("Maximum midpoint-relative spread: 15% for stock and option. Positive bid size, tick, exact deliverable and account review are required. Delta and open interest are unused. Orders are serialized; unknown submissions block new orders and are never retried.")
                     detail("Assignment and callaway retain the existing reporting delay of at least 24 hours. Pausing does not cancel accepted orders. Fresh native readiness and authenticated activation are required for the exact release and configuration.")
-                    detail("Verified existing AutoWheel puts and 100-share lots remain managed through the policy transition and occupy the same three slots. Their current contracts stay unchanged; subsequent openings use this policy. External shares are excluded.")
+                    detail("Verified existing AutoWheel puts and 100-share lots remain managed through the policy transition and occupy managed slots. Their current contracts stay unchanged; subsequent openings use this policy. External shares are excluded.")
                 }
                 section("Opening roster") { detail(c.symbols.joined(separator: " · ")).font(MenuFont.detailEmphasis) }
             } else {
@@ -422,11 +447,11 @@ struct WheelView: View {
     }
     private var serviceButtons: some View {
         VStack(alignment: .leading, spacing: 0) {
-            actionRow("Start msi Service", symbol: "play") { Task { await model.service(.start) } }
+            actionRow("Start \(model.deployment.name) Service", symbol: "play") { Task { await model.service(.start) } }
                 .disabled(model.busy || (model.status?.mode == "live" && model.status?.halted == false))
-            actionRow("Restart msi Service", symbol: "arrow.clockwise") { Task { await model.service(.restart) } }
+            actionRow("Restart \(model.deployment.name) Service", symbol: "arrow.clockwise") { Task { await model.service(.restart) } }
                 .disabled(model.busy || (model.status?.mode == "live" && model.status?.halted == false))
-            actionRow("Stop msi Service", symbol: "stop") { Task { await model.service(.stop) } }.disabled(model.busy)
+            actionRow("Stop \(model.deployment.name) Service", symbol: "stop") { Task { await model.service(.stop) } }.disabled(model.busy)
         }
     }
     private func candidateView(_ a: WheelCandidate) -> some View {

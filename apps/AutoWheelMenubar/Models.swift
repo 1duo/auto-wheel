@@ -49,21 +49,30 @@ struct WheelConfig: Decodable {
 struct FixedPolicyDescriptor: Decodable {
     struct Spec: Decodable { let id: String }
     let spec: Spec
-    var usesTP75: Bool { spec.id == "conservative-rd1-floor-tp75-v1" }
+    var usesTP75: Bool { spec.id == "conservative-rd1-floor-tp75-v1" || usesRestingTP75 }
+    var usesRestingTP75: Bool { spec.id == "conservative-rd1-floor-tp75-resting-v2" || replenishesASAP }
+    var replenishesASAP: Bool { spec.id == "conservative-rd1-floor-tp75-asap-v3" }
     var isConservative: Bool { spec.id == "conservative-rd1-floor-hold-v1" || usesTP75 }
     var label: String {
         switch spec.id {
         case "conservative-rd1-floor-hold-v1": return "Conservative · floor + hold"
         case "conservative-rd1-floor-tp75-v1": return "Conservative · floor + TP75"
+        case "conservative-rd1-floor-tp75-resting-v2": return "Conservative · floor + resting TP75"
+        case "conservative-rd1-floor-tp75-asap-v3": return "Conservative · five slots + TP75 + ASAP"
         default: return "Unknown fixed policy"
         }
     }
     var scheduleLabel: String {
         guard isConservative else { return "Unknown schedule" }
+        if replenishesASAP { return "Resting TP75 · funded slot replenishment" }
+        if usesRestingTP75 { return "Resting TP75 · weekly openings" }
         return usesTP75 ? "Daily TP75 · weekly openings" : "Weekly openings"
     }
     var readinessDetail: String {
         guard isConservative else { return "Unknown policy. Native readiness and release binding are required." }
+        if usesRestingTP75 {
+            return "Resting targets and new openings require fresh market data, current account checks and authenticated native activation."
+        }
         return usesTP75
             ? "Integration verified. Daily profit checks and weekly openings still require their scheduled signals, fresh market data and current account checks."
             : "Integration verified. Openings still require their weekly signal, fresh market data and current account checks."
@@ -72,6 +81,7 @@ struct FixedPolicyDescriptor: Decodable {
 
 struct WheelPosition: Decodable {
     let put_id: String?
+    let call_id: String?
     let put_strike_cents: Int64?
     let owned_shares: Int
     let cost_cents: Int64?
@@ -115,6 +125,7 @@ struct BrokerShares: Decodable {
     let cost_cents: Int64
 }
 struct BrokerOption: Decodable {
+    let id: String?
     let symbol: String
     let kind: String
     let quantity: Int
@@ -138,16 +149,30 @@ struct AccountHolding: Decodable {
     let symbol: String
     let quantity: String
     let available: String
+    let side: String?
+    let security_type: String?
+    let ownership: String?
+    let currency: String?
 }
 struct AccountInfo: Decodable {
     let at: String
     let account_last4: String
     let options_level: String
-    let available_cash_cents: Int64
+    let available_cash_cents: Int64?
+    let reported_funds: String?
     let holdings: [AccountHolding]?
     let snapshot_complete: Bool
 	let execution_snapshot_usable: Bool?
 	let coverage_warning: String?
+    let balance_label: String?
+    let holdings_source_time_known: Bool?
+    let holdings_scope: String?
+    let holdings_complete: Bool?
+
+    var balanceText: String {
+        if let reported_funds { return "USD \(reported_funds)" }
+        return available_cash_cents.map { money($0) } ?? "Unavailable"
+    }
 }
 
 struct LiveReadiness: Decodable {
@@ -192,6 +217,9 @@ struct CoordinatorStatus: Decodable {
 }
 
 struct WheelStatus: Decodable {
+    let broker_id: String?
+    let deployment_id: String?
+    let execution_policy_id: String?
     let version: String
     let mode: String
     let stage: String
@@ -200,6 +228,7 @@ struct WheelStatus: Decodable {
     let server_time: String
     let halted: Bool
     let live_capable: Bool?
+    let execution_installed: Bool?
     let trading_window_open: Bool?
     let live_readiness: LiveReadiness?
     let coordinator: CoordinatorStatus?
@@ -212,6 +241,25 @@ struct WheelStatus: Decodable {
     let intents: [String: WheelIntent]?
     let candidates: [WheelCandidate]?
     let pending_selection_mode: String?
+
+    var executionTargetLabel: String? {
+        guard let execution_policy_id, !execution_policy_id.isEmpty else { return nil }
+        return execution_policy_id == "conservative-rd1-floor-tp75-asap-v3"
+            ? "Conservative · five slots + TP75 + ASAP" : "Unknown execution target"
+    }
+
+    func canActivate(deployment: BrokerDeployment, now: Date = Date()) -> Bool {
+        guard deployment.acceptsStatus(self), !hasPendingSelection, live_capable == true,
+              let check = live_readiness, check.ready,
+              timestampFresh(check.at, maxAge: deployment == .moomoo ? 30 : 1200, now: now),
+              let broker, timestampFresh(broker.at, maxAge: deployment == .moomoo ? 30 : 600, now: now),
+              (intents ?? [:]).isEmpty else { return false }
+        if deployment == .moomoo {
+            return execution_installed == true && config.fixed_policy?.replenishesASAP == true &&
+                config.order_coverage_policy == "moomoo_complete"
+        }
+        return true
+    }
 
     var pendingSelection: SelectionMode? {
         guard let raw = pending_selection_mode, !raw.isEmpty else { return nil }
@@ -273,6 +321,71 @@ func age(_ text: String, now: Date = Date()) -> String {
     if seconds < 3600 { return "\(seconds / 60)m ago" }
     if seconds < 86400 { return "\(seconds / 3600)h ago" }
     return "\(seconds / 86400)d ago"
+}
+
+func holdingsFresh(_ text: String, connected: Bool, now: Date = Date()) -> Bool {
+    connected && timestampFresh(text, maxAge: 600, now: now)
+}
+
+func timestampFresh(_ text: String, maxAge: TimeInterval, now: Date = Date()) -> Bool {
+    guard let at = timestamp(text) else { return false }
+    let seconds = now.timeIntervalSince(at)
+    return seconds >= -2 && seconds < maxAge
+}
+
+struct HoldingRow: Identifiable {
+    let id: String
+    let symbol: String
+    let detail: String
+    let at: String
+}
+
+struct HoldingsPresentation {
+    var rows: [HoldingRow] = []
+    var emptyMessage = "Holdings unavailable · awaiting broker read"
+    var warning: String?
+}
+
+func holdingsPresentation(_ s: WheelStatus?, deployment: BrokerDeployment) -> HoldingsPresentation {
+    guard let s else { return HoldingsPresentation() }
+    var result = HoldingsPresentation()
+    if let info = s.account_info, let holdings = info.holdings {
+        result.rows += holdings.enumerated().map { index, h in
+            let owned = s.positions?[h.symbol]?.owned_shares ?? 0
+            let owner = h.ownership == "external_unclaimed" ? "unclaimed" : (owned > 0 ? "AutoWheel records \(owned) owned shares" : "external / unclaimed")
+            let unit = h.security_type ?? (deployment == .robinhood ? "shares" : "units")
+            let side = h.side.map { "\($0.lowercased()) · " } ?? ""
+            return HoldingRow(id: "account-\(index)-\(h.symbol)", symbol: h.symbol,
+                detail: "\(h.quantity) \(unit.lowercased()) · \(side)\(owner)", at: info.at)
+        }
+    } else if let broker = s.broker {
+        result.rows += (broker.shares ?? []).map { h in
+            let owned = s.positions?[h.symbol]?.owned_shares ?? 0
+            let owner = owned > 0 ? "AutoWheel records \(owned) owned shares" : "external / unclaimed"
+            return HoldingRow(id: "stock-\(h.symbol)", symbol: h.symbol,
+                detail: "\(h.quantity) shares · \(owner)", at: broker.at)
+        }
+    }
+    if deployment == .robinhood {
+        if let broker = s.broker {
+            result.rows += (broker.options ?? []).map { option in
+                let position = s.positions?[option.symbol]
+                let managed = option.id != nil && (option.id == position?.put_id || option.id == position?.call_id)
+                return HoldingRow(id: "option-\(option.symbol)-\(option.kind)-\(option.expiry)-\(option.strike_cents)",
+                    symbol: "\(option.symbol) · \(option.kind.uppercased())",
+                    detail: "\(option.quantity) short contract · \(money(option.strike_cents)) · \(option.expiry) · \(managed ? "managed" : "ownership unverified")", at: broker.at)
+            }
+            result.emptyMessage = "No holdings in the last reported snapshot"
+        } else {
+            result.warning = "Option holdings unavailable. Stock rows alone do not establish an empty account."
+            if s.account_info?.holdings != nil { result.emptyMessage = "No reported stock holdings · option holdings unavailable" }
+        }
+    } else if s.account_info?.holdings_complete == true, s.account_info?.holdings_scope == "all_positions", s.account_info?.holdings != nil {
+        result.emptyMessage = "No holdings in the last reported snapshot"
+    } else {
+        result.warning = "Complete position coverage has not been established."
+    }
+    return result
 }
 
 struct ProfitPreview: Decodable {

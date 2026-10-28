@@ -3,15 +3,15 @@ import SwiftUI
 
 @MainActor
 final class WheelController: NSObject {
-    private let model: WheelModel
+    private let model: AccountsModel
     private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let popover = NSPopover()
-    init(model: WheelModel) {
+    init(model: AccountsModel) {
         self.model = model
         super.init()
         popover.behavior = .transient
         popover.animates = false
-        let hosting = NSHostingController(rootView: WheelView(model: model))
+        let hosting = NSHostingController(rootView: AccountsView(accounts: model))
         hosting.sizingOptions = .preferredContentSize
         popover.contentViewController = hosting
         item.button?.target = self
@@ -24,7 +24,7 @@ final class WheelController: NSObject {
         update()
     }
     private func update() {
-        item.button?.toolTip = "AutoWheel · \(model.title) · \(model.status?.mode ?? "unverified")"
+        item.button?.toolTip = "AutoWheel · \(model.title)"
         item.button?.image = Self.makeTrayIcon(dot: model.trayColor)
     }
     // An A for AutoWheel, with OptionZero's 18-point size and status dot.
@@ -61,7 +61,7 @@ final class WheelController: NSObject {
 
 @MainActor
 final class WheelDelegate: NSObject, NSApplicationDelegate {
-    private let model = WheelModel()
+    private let model = AccountsModel()
     private var controller: WheelController?
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -115,8 +115,15 @@ struct AutoWheelEntry {
             do {
                 let data = try Data(contentsOf: URL(string: "http://127.0.0.1:19841/status")!)
                 let s = try JSONDecoder().decode(WheelStatus.self, from: data)
+                let moomooData = try Data(contentsOf: URL(string: "http://127.0.0.1:19842/status")!)
+                let moomoo = try JSONDecoder().decode(WheelStatus.self, from: moomooData)
                 guard timestamp(s.server_time) != nil, timestamp(s.at) != nil,
-                      s.config.max_symbols == 3, s.config.max_collateral_cents == 8000000,
+                      s.config.max_symbols == 5, s.config.fixed_policy?.replenishesASAP == true,
+                      BrokerDeployment.robinhood.acceptsStatus(s), BrokerDeployment.moomoo.acceptsStatus(moomoo),
+                      moomoo.config.max_symbols == 5, moomoo.execution_policy_id == "conservative-rd1-floor-tp75-asap-v3",
+                      moomoo.mode == "read_only", moomoo.live_capable == false,
+                      moomoo.execution_installed == true, !moomoo.canActivate(deployment: .moomoo),
+                      timestamp(moomoo.server_time) != nil, timestamp(moomoo.account_info?.at ?? "") != nil,
                       money(199) == "$1.99", timestamp("2026-10-04T14:21:40.123456789-07:00") != nil,
                       MSIService.command(.restart) == "sudo -n systemctl restart autowheel.service",
                       MSIService.command(.start) == "sudo -n systemctl start autowheel.service",

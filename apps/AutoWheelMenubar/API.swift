@@ -4,8 +4,55 @@ import Darwin
 enum OperatorAction: String { case halt, resume, refresh, live }
 enum ServiceAction: String { case start, stop, restart, logs }
 
+enum BrokerDeployment: String, CaseIterable, Identifiable {
+    case robinhood, moomoo
+
+    var id: String { rawValue }
+
+    var name: String {
+        switch self {
+        case .robinhood: return "Robinhood"
+        case .moomoo: return "Moomoo"
+        }
+    }
+
+    var baseURL: URL {
+        switch self {
+        case .robinhood: return URL(string: "http://127.0.0.1:19841")!
+        case .moomoo: return URL(string: "http://127.0.0.1:19842")!
+        }
+    }
+
+    var operatorCredentialName: String {
+        switch self {
+        case .robinhood: return "operator-token.json"
+        case .moomoo: return "moomoo-operator-token.json"
+        }
+    }
+
+    var serviceName: String {
+        switch self {
+        case .robinhood: return "autowheel.service"
+        case .moomoo: return "autowheel-moomoo.service"
+        }
+    }
+
+    func acceptsStatus(_ status: WheelStatus) -> Bool {
+        switch self {
+        case .moomoo: return status.broker_id == "moomoo" && status.deployment_id == "autowheel-moomoo"
+        case .robinhood: return status.broker_id == nil || status.broker_id == "robinhood"
+        }
+    }
+}
+
 struct OperatorAPI {
-    let base = URL(string: "http://127.0.0.1:19841")!
+    let deployment: BrokerDeployment
+
+    init(deployment: BrokerDeployment = .robinhood) {
+        self.deployment = deployment
+    }
+
+    var base: URL { deployment.baseURL }
     var calendarURL: URL { base.appendingPathComponent("calendar") }
     func calendarAvailable() async -> Bool {
         var request = URLRequest(url: calendarURL)
@@ -22,6 +69,7 @@ struct OperatorAPI {
         guard ["read_only", "live"].contains(status.mode), timestamp(status.server_time) != nil else {
             throw OperatorError.message("Unsupported daemon response")
         }
+        guard deployment.acceptsStatus(status) else { throw OperatorError.message("Broker/deployment mismatch: expected \(deployment.name)") }
         return status
     }
     func control(_ action: OperatorAction) async throws {
@@ -55,7 +103,7 @@ struct OperatorAPI {
     }
     private func operatorToken() throws -> String {
         let path = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/AutoWheel/operator-token.json").path
+            .appendingPathComponent("Library/Application Support/AutoWheel/\(deployment.operatorCredentialName)").path
         let fd = Darwin.open(path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
         guard fd >= 0 else { throw OperatorError.message("Private operator credential unavailable; pair this Mac with the daemon.") }
         let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
@@ -80,16 +128,16 @@ enum OperatorError: LocalizedError {
 enum MSIService {
     // These commands are fixed by the app. Broker responses and editable UI text
     // can never become shell commands. The daemon validates its durable activation record on every start.
-    static func command(_ action: ServiceAction) -> String {
-        if action == .logs { return "journalctl -u autowheel.service -n 80 --reverse --no-pager -o cat" }
-        let control = "sudo -n systemctl \(action.rawValue) autowheel.service"
+    static func command(_ action: ServiceAction, deployment: BrokerDeployment = .robinhood) -> String {
+        if action == .logs { return "journalctl -u \(deployment.serviceName) -n 80 --reverse --no-pager -o cat" }
+        let control = "sudo -n systemctl \(action.rawValue) \(deployment.serviceName)"
         return control
     }
-    static func run(_ action: ServiceAction) async throws -> String {
+    static func run(_ action: ServiceAction, deployment: BrokerDeployment = .robinhood) async throws -> String {
         try await Task.detached(priority: .utility) {
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
-            process.arguments = ["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "-o", "StrictHostKeyChecking=yes", "-o", "ServerAliveInterval=5", "-o", "ServerAliveCountMax=1", "yuduo@192.168.1.50", command(action)]
+            process.arguments = ["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "-o", "StrictHostKeyChecking=yes", "-o", "ServerAliveInterval=5", "-o", "ServerAliveCountMax=1", "yuduo@192.168.1.50", command(action, deployment: deployment)]
             let pipe = Pipe()
             process.standardOutput = pipe
             process.standardError = pipe
